@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Merry Christmas · 手势粒子圣诞树</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%E2%9C%A6%3C/text%3E%3C/svg%3E" />
+<link rel="stylesheet" href="./styles.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.js",
+    "three/addons/": "./vendor/three/addons/"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div id="hud">
+  <header class="hud-top">
+    <div class="brand">
+      <div class="brand-en">Merry Christmas</div>
+      <div class="brand-cn">手势粒子圣诞树 · MediaPipe Hands × Three.js</div>
+    </div>
+    <div class="audio-bar">
+      <button id="btnMusic" class="btn primary">放入音乐</button>
+      <button id="btnPause" class="btn" disabled>暂停</button>
+      <input id="fileInput" type="file" accept="audio/*" hidden />
+      <div class="beat" id="beatDot" title="鼓点"></div>
+      <div class="track" id="trackName">无音乐 · 内置律动</div>
+    </div>
+  </header>
+
+  <aside class="cam-wrap" id="camWrap">
+    <video id="cam" playsinline muted autoplay></video>
+    <div class="cam-off" id="camOff">摄像头未启动</div>
+    <div class="cam-tag"><span id="handCount">0</span> 只手</div>
+  </aside>
+
+  <div class="hints" id="hints">
+    <div class="hint" data-k="fist"><b>握拳</b><span>树体收拢、彩灯转暗</span></div>
+    <div class="hint" data-k="open"><b>张开</b><span>粒子炸散成雪</span></div>
+    <div class="hint" data-k="spread"><b>双手开合</b><span>缩放整棵树</span></div>
+    <div class="hint" data-k="clap"><b>拍手</b><span>爆雪 + 星光</span></div>
+    <div class="hint" data-k="vortex"><b>画圈 / 推拉</b><span>绕树涡流</span></div>
+    <div class="hint" data-k="tray"><b>掌心向上</b><span>托盘接礼物</span></div>
+  </div>
+
+  <div class="status" id="status">
+    <span class="dot"></span><span id="statusText">正在加载模型…</span>
+  </div>
+
+  <div class="score" id="score">
+    <div class="score-num" id="scoreNum">0</div>
+    <div class="score-label">礼物已接住</div>
+  </div>
+</div>
+
+<div id="loading">
+  <div class="loading-inner">
+    <div class="loading-title">Merry Christmas</div>
+    <div class="loading-sub" id="loadingText">正在唤醒雪夜…</div>
+    <div class="loading-bar"><i id="loadingBar"></i></div>
+    <div class="loading-note">请允许使用摄像头，举起双手即可开始</div>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
