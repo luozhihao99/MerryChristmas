@@ -4,6 +4,7 @@ import {
   dotTexture,
   glowTexture,
   starTexture,
+  starGlowTexture,
 } from './textures.js';
 
 export const TREE = { H: 9.0, R: 3.15 };
@@ -18,9 +19,14 @@ export function radiusAt(t, angle = 0) {
   return TREE.R * cone * tiers * bump;
 }
 
-const NEEDLE_COUNT = 26000;
-const DUST_COUNT = 1500;
-const LIGHT_COUNT = 190;
+// 粒子数量按设备能力调整：移动端减半，既省首帧构建时间也省 GPU 上传
+export const QUALITY = { needle: 26000, dust: 1500, lights: 190 };
+
+export function configureQuality({ needle, dust, lights } = {}) {
+  if (needle) QUALITY.needle = needle;
+  if (dust) QUALITY.dust = dust;
+  if (lights) QUALITY.lights = lights;
+}
 
 const needleVert = /* glsl */`
 uniform float uTime;
@@ -80,10 +86,18 @@ void main(){
 
   vec2 rd = normalize(p.xz + vec2(0.0001));
   vec3 n = normalize(vec3(rd.x, 0.45, rd.y));
+
+  // 朝向镜头的补光：树会自转（空闲慢转 + 手动旋转），转到背光角度时
+  // 整面会变成死黑，只剩彩灯浮在空气里 —— 必须给一层跟随相机的底光。
+  // 用观察空间法线算，所以它永远作用在「此刻正对镜头的那一面」。
+  vec3 vn = normalize((modelViewMatrix * vec4(n, 0.0)).xyz);
+  float fillL = max(dot(vn, vec3(0.0, 0.0, 1.0)), 0.0);
+
   float lam = max(dot(n, normalize(uLightDir)), 0.0);
-  float topLight = mix(0.30, 1.0, pow(hN, 0.70));
+  // 底部原来只有 0.30 的顶部光，树根一带几乎是纯黑，抬到 0.44 保住体积感又不至于死。
+  float topLight = mix(0.44, 1.0, pow(hN, 0.70));
   float rim = pow(1.0 - abs(dot(n, vec3(0.0, 0.0, 1.0))), 2.0);
-  float lit = 0.26 + 0.95 * lam * topLight + 0.30 * rim * topLight;
+  float lit = 0.30 + 0.78 * lam * topLight + 0.26 * fillL + 0.24 * rim * topLight;
 
   float fog = smoothstep(34.0, 8.0, depth);
 
@@ -91,12 +105,13 @@ void main(){
   c = mix(c, c * vec3(1.45, 1.12, 0.62), uWarm * aTint);
   c += vec3(0.90, 0.66, 0.26) * uBeat * (0.06 + aTint * 0.30);
 
-  // 背面压暗：这是体积感最关键的线索
+  // 背面压暗：体积感的关键线索，但不能压到死黑
+  // （0.32 → 0.48，深色背景下 0.32 那一侧会整片消失）
   float back = 1.0 - smoothstep(-2.4, 0.2, p.z / max(uScale, 0.001));
-  c *= mix(1.0, 0.32, back);
+  c *= mix(1.0, 0.48, back);
 
   vColor = c;
-  vAlpha = fog * (0.55 + 0.45 * aTint) * mix(1.0, 0.62, back);
+  vAlpha = fog * (0.60 + 0.40 * aTint) * mix(1.0, 0.74, back);
   vRot = aSeed * 6.2831 + uTime * (aSeed - 0.5) * 0.35;
 }
 `;
@@ -254,11 +269,11 @@ export class ParticleTree {
 
   _buildNeedles() {
     const geo = new THREE.BufferGeometry();
-    const pos = new Float32Array(NEEDLE_COUNT * 3);
-    const col = new Float32Array(NEEDLE_COUNT * 3);
-    const size = new Float32Array(NEEDLE_COUNT);
-    const seed = new Float32Array(NEEDLE_COUNT);
-    const tint = new Float32Array(NEEDLE_COUNT);
+    const pos = new Float32Array(QUALITY.needle * 3);
+    const col = new Float32Array(QUALITY.needle * 3);
+    const size = new Float32Array(QUALITY.needle);
+    const seed = new Float32Array(QUALITY.needle);
+    const tint = new Float32Array(QUALITY.needle);
 
     const palette = [
       new THREE.Color(0x0b2b1c).multiplyScalar(1.55),
@@ -271,7 +286,7 @@ export class ParticleTree {
     const goldB = new THREE.Color(0xffe2ae).multiplyScalar(1.8);
     const c = new THREE.Color();
 
-    for (let i = 0; i < NEEDLE_COUNT; i++) {
+    for (let i = 0; i < QUALITY.needle; i++) {
       const u = Math.random();
       const t = 1 - Math.pow(u, 0.62);
       const y = t * TREE.H + (Math.random() - 0.5) * 0.16;
@@ -331,16 +346,16 @@ export class ParticleTree {
 
   _buildDust() {
     const geo = new THREE.BufferGeometry();
-    const pos = new Float32Array(DUST_COUNT * 3);
-    const col = new Float32Array(DUST_COUNT * 3);
-    const size = new Float32Array(DUST_COUNT);
-    const seed = new Float32Array(DUST_COUNT);
+    const pos = new Float32Array(QUALITY.dust * 3);
+    const col = new Float32Array(QUALITY.dust * 3);
+    const size = new Float32Array(QUALITY.dust);
+    const seed = new Float32Array(QUALITY.dust);
 
     const warm = new THREE.Color(0xffdca8).multiplyScalar(0.75);
     const pale = new THREE.Color(0xcfe8d8).multiplyScalar(0.6);
     const c = new THREE.Color();
 
-    for (let i = 0; i < DUST_COUNT; i++) {
+    for (let i = 0; i < QUALITY.dust; i++) {
       const a = Math.random() * Math.PI * 2;
       const r = 1.6 + Math.pow(Math.random(), 0.7) * 4.0;
       pos[i * 3] = Math.cos(a) * r;
@@ -381,10 +396,10 @@ export class ParticleTree {
 
   _buildLights() {
     const geo = new THREE.BufferGeometry();
-    const pos = new Float32Array(LIGHT_COUNT * 3);
-    const col = new Float32Array(LIGHT_COUNT * 3);
-    const size = new Float32Array(LIGHT_COUNT);
-    const seed = new Float32Array(LIGHT_COUNT);
+    const pos = new Float32Array(QUALITY.lights * 3);
+    const col = new Float32Array(QUALITY.lights * 3);
+    const size = new Float32Array(QUALITY.lights);
+    const seed = new Float32Array(QUALITY.lights);
 
     const colors = [
       new THREE.Color(0xffd9a0).multiplyScalar(3.4),
@@ -395,8 +410,8 @@ export class ParticleTree {
     ];
 
     const turns = 7.2;
-    for (let i = 0; i < LIGHT_COUNT; i++) {
-      const t = i / (LIGHT_COUNT - 1);
+    for (let i = 0; i < QUALITY.lights; i++) {
+      const t = i / (QUALITY.lights - 1);
       // 沿树体螺旋上升，越往上越密
       const y = 0.55 + t * (TREE.H - 1.15);
       const tt = y / TREE.H;
@@ -447,10 +462,14 @@ export class ParticleTree {
     }
     const geo = new THREE.LatheGeometry(pts, 72);
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x0a2014,
+      color: 0x0d2517,
       roughness: 0.94,
       metalness: 0.0,
       side: THREE.DoubleSide,
+      // 内壳给一点自发光：它是挡住背面粒子的「实心体」，
+      // 完全没有灯的角度下如果纯黑，树会像被挖掉一块。只给极暗的绿，不抢针叶。
+      emissive: 0x08190f,
+      emissiveIntensity: 1.0,
     });
     this.cone = new THREE.Mesh(geo, mat);
     this.solid.add(this.cone);
@@ -505,19 +524,34 @@ export class ParticleTree {
   }
 
   _buildStar() {
-    const tex = starTexture();
-    const mat = new THREE.SpriteMaterial({
-      map: tex,
+    // 星体：不透明混合，保留切面明暗，像一枚实体金属星
+    const bodyMat = new THREE.SpriteMaterial({
+      map: starTexture(),
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.NormalBlending,
+    });
+    this.starMat = bodyMat;
+    this.star = new THREE.Sprite(bodyMat);
+    this.star.position.set(0, TREE.H + 0.52, 0);
+    this.star.scale.setScalar(2.05);
+    this.star.renderOrder = 3;
+    this.solid.add(this.star);
+
+    // 辉光：加法混合的独立一层，负责发光和 Bloom 的引子
+    const glowMat = new THREE.SpriteMaterial({
+      map: starGlowTexture(),
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
-      color: 0xffffff,
+      opacity: 0.5,
     });
-    this.starMat = mat;
-    this.star = new THREE.Sprite(mat);
-    this.star.position.set(0, TREE.H + 0.50, 0);
-    this.star.scale.setScalar(1.95);
-    this.solid.add(this.star);
+    this.starGlowMat = glowMat;
+    this.starGlow = new THREE.Sprite(glowMat);
+    this.starGlow.position.copy(this.star.position);
+    this.starGlow.scale.setScalar(2.75);
+    this.starGlow.renderOrder = 2;
+    this.solid.add(this.starGlow);
 
     const glow = new THREE.PointLight(0xffc978, 18, 15, 2);
     glow.position.set(0, TREE.H + 0.1, 0);
@@ -540,11 +574,20 @@ export class ParticleTree {
     this.solid.scale.setScalar(params.scale);
     this.needleMat.uniforms.uOpacity.value = 0.72 - params.collapse * 0.2;
 
-    this.starMat.rotation = t * 0.12;
-    const starScale = 1.95 * (1 + params.beat * 0.42) * (1 + params.explode * 0.25);
+    // 侧掌扇风：整棵树绕自身中轴转，像被一阵风卷着打旋。
+    // 角度由 InteractionRouter 累积（含惯性衰减），这里直接用，不再二次平滑。
+    this.group.rotation.y = params.spin || 0;
+
+    // 星星：只做极缓的摇摆和亮度呼吸，避免快速旋转/闪烁
+    this.starMat.rotation = Math.sin(t * 0.28) * 0.05;
+    this.starGlowMat.rotation = -Math.sin(t * 0.21) * 0.035;
+    const twinkle = 0.965 + 0.035 * Math.sin(t * 1.15) + 0.015 * Math.sin(t * 2.7 + 1.1);
+    const starScale = 2.05 * (1 + params.beat * 0.10) * (1 + params.explode * 0.16);
     this.star.scale.setScalar(starScale);
-    this.starMat.opacity = 0.52 + params.beat * 0.30;
-    this.starLight.intensity = 14 + params.beat * 32;
+    this.starMat.opacity = Math.min(1, 0.92 * twinkle + params.beat * 0.08);
+    this.starGlow.scale.setScalar(2.75 * (1 + params.beat * 0.20) * (1 + params.explode * 0.22));
+    this.starGlowMat.opacity = Math.min(1, 0.42 * twinkle + params.beat * 0.26);
+    this.starLight.intensity = 14 + params.beat * 26;
 
     this.ornamentMat.emissiveIntensity = 0.25 + params.high * 1.5 + params.beat * 0.5;
   }

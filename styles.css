@@ -31,6 +31,7 @@ html,body{
 }
 
 .hud-top{
+  position:relative; z-index:30;
   display:flex; justify-content:space-between; align-items:flex-start;
   gap:20px;
 }
@@ -45,6 +46,7 @@ html,body{
 }
 
 .audio-bar{
+  position:relative;
   display:flex; align-items:center; gap:8px;
   pointer-events:auto;
   background:var(--panel);
@@ -61,6 +63,7 @@ html,body{
   color:var(--ink);
   font-family:inherit; font-size:12px; letter-spacing:.04em;
   padding:7px 13px; border-radius:8px; cursor:pointer;
+  white-space:nowrap;
   transition:background .18s ease, border-color .18s ease, opacity .18s ease;
 }
 .btn:hover{ background:rgba(255,255,255,.1); border-color:rgba(200,220,240,.26); }
@@ -71,6 +74,38 @@ html,body{
   color:#f4dcb2;
 }
 .btn.primary:hover{ background:rgba(232,192,122,.22); }
+.btn.help{
+  width:26px; padding:7px 0; border-radius:50%;
+  font-size:11px; color:var(--faint); line-height:1;
+}
+.btn.help[aria-expanded="true"]{
+  color:var(--gold); border-color:rgba(232,192,122,.4);
+  background:rgba(232,192,122,.14);
+}
+
+.music-help{
+  position:absolute; top:calc(100% + 10px); right:0; z-index:15;
+  width:min(340px, 78vw);
+  padding:14px 16px 12px;
+  border-radius:12px;
+  border:1px solid rgba(200,220,240,.18);
+  background:rgba(9,14,22,.96);
+  box-shadow:0 18px 44px rgba(0,0,0,.55);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  text-align:left;
+}
+.music-help[hidden]{ display:none; }
+.music-help .mh-title{
+  font-size:11.5px; letter-spacing:.06em; color:var(--gold);
+  margin-bottom:4px;
+}
+.music-help .mh-title + p{ margin-bottom:9px; }
+.music-help p{
+  font-size:11px; line-height:1.62; color:rgba(214,228,240,.72);
+  margin:0;
+}
+.music-help p b{ font-weight:500; color:rgba(255,244,222,.92); }
 
 .track{
   font-size:11px; color:var(--faint); max-width:150px;
@@ -115,6 +150,19 @@ html,body{
   background:rgba(6,10,16,.6); border-radius:5px; padding:2px 6px;
 }
 
+/* ?debug 时的比心探针：ring / 指尖间距 / 高度差 / 变化速度 / 打分 / 卡在哪一步 */
+.probe{
+  position:absolute; right:26px; top:246px;
+  max-width:300px;
+  font:11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color:#8fe3c0; background:rgba(6,10,16,.74);
+  border:1px solid var(--line); border-radius:8px;
+  padding:5px 8px; letter-spacing:.01em; white-space:pre-line;
+  pointer-events:none;
+}
+.probe[hidden]{ display:none; }
+.probe.hit{ color:#ffd3e2; border-color:rgba(255,122,163,.6); background:rgba(38,10,22,.8); }
+
 .hints{
   position:absolute; left:26px; bottom:54px;
   display:flex; flex-direction:column; gap:7px;
@@ -129,16 +177,28 @@ html,body{
   font-weight:500; color:rgba(230,240,250,.72); letter-spacing:.03em;
   min-width:64px;
 }
+/* display:flex 会盖掉浏览器对 [hidden] 的默认处理，这里显式还原 */
+.hint[hidden]{ display:none; }
 .hint.on{
   color:rgba(255,244,222,.92);
   border-left-color:var(--gold);
 }
 .hint.on b{ color:var(--gold); }
+.hint[data-k="heart"].on{
+  color:rgba(255,226,236,.95);
+  border-left-color:#ff8fb0;
+}
+.hint[data-k="heart"].on b{ color:#ffb3c7; }
 
 .status{
   position:absolute; left:50%; bottom:22px; transform:translateX(-50%);
   display:flex; align-items:center; gap:8px;
   font-size:11px; letter-spacing:.07em; color:var(--faint);
+  max-width:calc(100vw - 40px);
+}
+#statusText{
+  min-width:0; overflow:hidden;
+  white-space:nowrap; text-overflow:ellipsis;
 }
 .status .dot{
   width:5px; height:5px; border-radius:50%;
@@ -196,8 +256,22 @@ html,body{
 @media (max-width: 900px){
   #hud{ padding:16px; }
   .cam-wrap{ width:132px; height:100px; right:16px; top:76px; }
+  .probe{ right:16px; top:184px; max-width:220px; font-size:10px; }
   .hints{ left:16px; bottom:46px; }
   .hint b{ min-width:56px; }
   .brand-en{ font-size:15px; }
   .broadcast{ display:none; }
+}
+
+@media (max-width: 760px){
+  .hud-top{ gap:10px; }
+  .brand-en{ font-size:14px; letter-spacing:.12em; white-space:nowrap; }
+  .brand-cn{ display:none; }
+  .audio-bar{ padding:5px 7px; gap:6px; }
+  .btn{ padding:6px 9px; font-size:11px; }
+  .btn.help{ width:22px; padding:6px 0; }
+  /* 窄屏放不下曲名，改为在底部状态条里显示 */
+  .track{ display:none; }
+  .music-help{ width:min(300px, 86vw); padding:12px 13px 10px; }
+  .music-help p{ font-size:10.5px; line-height:1.58; }
 }

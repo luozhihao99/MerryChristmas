@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Merry Christmas · 手势粒子圣诞树</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%E2%9C%A6%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+<link rel="preconnect" href="https://storage.googleapis.com" crossorigin />
 <link rel="stylesheet" href="./styles.css" />
 <script type="importmap">
 {
@@ -26,10 +28,24 @@
     </div>
     <div class="audio-bar">
       <button id="btnMusic" class="btn primary">放入音乐</button>
-      <button id="btnPause" class="btn" disabled>暂停</button>
-      <input id="fileInput" type="file" accept="audio/*" hidden />
+      <button id="btnPause" class="btn" disabled>播放</button>
+      <button id="btnHelp" class="btn help" title="音乐格式与手机导入说明" aria-label="音乐格式说明">?</button>
+      <input id="fileInput" type="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac" hidden />
       <div class="beat" id="beatDot" title="鼓点"></div>
       <div class="track" id="trackName">无音乐 · 内置律动</div>
+
+      <div class="music-help" id="musicHelp" hidden>
+        <div class="mh-title">放什么最稳</div>
+        <p><b>mp3</b> 或 <b>m4a</b> 最稳，wav / ogg 也行。时长 3–5 分钟、20MB 以内最保险；
+          更大的文件会自动切换成流式播放，但拖时间轴会略慢。</p>
+        <div class="mh-title">手机里选不到文件？</div>
+        <p>iPhone 请从「文件」App 里选。QQ 音乐、网易云、Apple Music 里下载的曲子带版权保护，
+          系统不允许任何网页读取，所以它们是灰的点不动。</p>
+        <p>在微信里打开的话，先点右上角「…」→ 在浏览器中打开，微信内置浏览器不允许选择文件。</p>
+        <div class="mh-title">还是失败？</div>
+        <p>把歌曲用电脑或格式转换工具另存成标准 mp3（44.1kHz / 立体声）再传进来，
+          带 DRM 的 m4a 和部分无损格式浏览器解不了。</p>
+      </div>
     </div>
   </header>
 
@@ -39,13 +55,18 @@
     <div class="cam-tag"><span id="handCount">0</span> 只手</div>
   </aside>
 
+  <div class="probe" id="probe" hidden></div>
+
   <div class="hints" id="hints">
     <div class="hint" data-k="fist"><b>握拳</b><span>树体收拢、彩灯转暗</span></div>
-    <div class="hint" data-k="open"><b>张开</b><span>粒子炸散成雪</span></div>
+    <div class="hint" data-k="open"><b>抓取张开</b><span>单手抓一把 → 张开手掌 · 粒子炸散成雪</span></div>
     <div class="hint" data-k="spread"><b>双手开合</b><span>缩放整棵树</span></div>
     <div class="hint" data-k="clap"><b>拍手</b><span>爆雪 + 星光</span></div>
-    <div class="hint" data-k="vortex"><b>画圈 / 推拉</b><span>绕树涡流</span></div>
+    <div class="hint" data-k="slide"><b>侧掌扇风</b><span>掌心朝侧 · 左右扇 → 树绕轴转</span></div>
     <div class="hint" data-k="tray"><b>掌心向上</b><span>托盘接礼物</span></div>
+    <div class="hint" data-k="heart"><b>双手比心</b><span>两手各捏半心 · 并拢停住</span></div>
+    <div class="hint" data-k="call"><b>打电话</b><span>拇指 + 小指伸出 · Miss me? Call me</span></div>
+    <div class="hint" data-k="like"><b>点赞</b><span>拇指竖起 · 四指收回 · 粒子星星 666</span></div>
   </div>
 
   <div class="status" id="status">

@@ -1,4 +1,5 @@
 import { FilesetResolver, HandLandmarker } from '../vendor/mediapipe/vision_bundle.mjs';
+import { GESTURE_SWITCH } from './gestureConfig.js';
 
 const TIP = [8, 12, 16, 20];
 const PIP = [6, 10, 14, 18];
@@ -6,6 +7,74 @@ const MCP = [5, 9, 13, 17];
 
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 const dist2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+const DELEGATE_KEY = 'mp-delegate';
+
+/**
+ * 扇风方向符号。
+ * 画面是镜像显示的，法线的 x 分量要翻一下才和「屏幕左右」一致。
+ * 真机上如果出现「手往右扇、树往左跑」，把这里改成 1 即可。
+ */
+const SIDE_SIGN = -1;
+
+/** 「抓取 → 张开手掌」的阈值 */
+const BURST_CFG = {
+  grab: 0.50,        // 抓取程度达到它才算「抓到了」（1 = 五指完全收进掌心）
+  grabOpen: 0.62,    // 抓握时手掌不可能很开，超过它直接不算，避免张开手被当成抓取
+  hold: 90,          // 抓取要保持多久才算数（路过时指尖扫一下不算）
+  open: 0.72,        // 「张开手掌」的 openness 门槛
+  window: 1200,      // 抓取后多久之内张开才算数
+  cooldown: 700,     // 两次炸裂的最短间隔
+};
+
+/**
+ * 「点赞」（拇指竖起、其余四指收回）的判定与节流参数。
+ *
+ * 这个手势和「比 6 / 打电话」几何上只差一根小指，所以分数里专门乘了
+ * 一项「小指收回」的权重：小指一伸出去，分数直接掉到 0，绝不会互相抢。
+ */
+const LIKE_CFG = {
+  threshold: 0.70,   // like 分数门槛（拇指朝上 ≈0.95，握拳 ≈0.5，比 6 ≈0.35）
+  hold: 240,         // 稳住多久才触发（抬手路过不会误触）
+  cooldown: 3000,    // 两轮之间的最短间隔
+  burstGuard: 0.45,  // like 超过它时不认「抓取」，否则点赞收手会被当成张手炸雪
+};
+
+/** 双手比心的软阈值。全部是「渐进打分」而不是硬与门，落到某一条不满足时会写进 probe.stage */
+const HEART_CFG = {
+  gapNear: 0.02, gapNearFull: 0.16,     // 两手指尖几乎重叠 → 更像拍手，降分
+  gapFarFull: 1.30, gapFarZero: 1.90,   // 心形是两手并拢（约一拳内），拉得更开就是缩放
+  levelFull: 0.85, levelZero: 1.60,     // 两手高度差（按手宽归一）
+  rateFull: 2.50, rateZero: 5.00,       // 指尖间距变化速度（手宽/秒）：只挡住快速挥舞
+  holdMs: 260,                          // 稳定保持多久才点亮
+  releaseMs: 220,                       // 松手后多久才熄灭（滞回，防闪）
+  threshold: 0.40,
+  clapGuard: 300,
+  ringGate: 0.55,
+  gapSmooth: 0.30,                      // 指尖间距低通：吃掉 MediaPipe 的逐帧抖动
+  rateSmooth: 0.30,
+};
+
+const smooth = (x) => {
+  const v = clamp01(x);
+  return v * v * (3 - 2 * v);
+};
+
+function readDelegate() {
+  try {
+    return localStorage.getItem(DELEGATE_KEY) === 'CPU' ? 'CPU' : 'GPU';
+  } catch {
+    return 'GPU';
+  }
+}
+
+function rememberDelegate(d) {
+  try {
+    localStorage.setItem(DELEGATE_KEY, d);
+  } catch {
+    /* 隐私模式忽略 */
+  }
+}
 
 /**
  * MediaPipe HandLandmarker 封装。
@@ -30,27 +99,85 @@ export class GestureController {
     this.lastClapAt = 0;
     this.farDist = null;
     this.farAt = 0;
-    this.vortexAccum = 0;
     this.handStates = {};
+    // 「打电话 / 比 6」：要稳住 240ms 才触发，触发后必须放下手才能再触发一次
+    this.phoneSince = 0;
+    this.phoneOn = false;
+    this.lastCallAt = 0;
+    // 「点赞」：同样的边沿触发 + 冷却
+    this.likeSince = 0;
+    this.likeOn = false;
+    this.lastLikeAt = 0;
+    this.lastBurstAt = 0;
+
+    // 双手比心
+    this.heart = { active: false, strength: 0, x: 0.5, y: 0.55, radius: 0.12 };
+    this.heartHoldSince = 0;
+    this.heartOn = false;
+    this.heartOffSince = 0;
+    this.heartLastAt = 0;
+    this.heartGap = null;
+    this.heartGapRate = 0;
+    // 调试探针：真机上比心不出效果时，看这几个数就知道卡在哪一步
+    this.probe = { ringA: 0, ringB: 0, gap: 0, level: 0, rate: 0, score: 0, stage: '-' };
 
     this.state = {
       hands: [],
       handCount: 0,
       spread: null,
       tray: null,
-      vortex: 0,
+      heart: this.heart,
     };
   }
 
-  async init() {
+  /**
+   * @param {object} prefetched 由 assetLoader 预取的结果（可选）
+   *   { wasmBase, modelBuffer, onProgress }
+   * 模型下载与摄像头授权并行进行，谁先完成都不影响另一个。
+   */
+  async init(prefetched = {}) {
+    const {
+      wasmBase = './vendor/mediapipe/wasm',
+      modelBuffer = null,
+      onProgress = null,
+    } = prefetched;
+
+    if (!navigator.mediaDevices || !window.isSecureContext) {
+      throw new Error('摄像头需要 https 或 localhost 环境');
+    }
+
+    // 先把摄像头权限问出来，别让用户盯着进度条等模型
+    const cameraPromise = this._startCamera();
+    cameraPromise.catch(() => {});   // 稍后统一 await，这里只避免 unhandled rejection
+
+    try {
+      await this._createLandmarker(wasmBase, modelBuffer, onProgress);
+    } catch (err) {
+      this._stopCamera();
+      throw err;
+    }
+
+    await cameraPromise;
+    performance.mark('mp:camera-ready');
+    this.ready = true;
+    this.onStatus('把手举到镜头前');
+    return true;
+  }
+
+  async _createLandmarker(wasmBase, modelBuffer, onProgress) {
     this.onStatus('正在加载手势模型…');
-    const vision = await FilesetResolver.forVisionTasks('./vendor/mediapipe/wasm');
+    performance.mark('mp:wasm-start');
+    const vision = await FilesetResolver.forVisionTasks(wasmBase);
+    performance.mark('mp:wasm-ready');
+    onProgress?.({ phase: 'wasm' });
+
+    // 已预取到内存就直接喂 buffer，免掉第二次网络请求
+    const baseOptions = modelBuffer
+      ? { modelAssetBuffer: new Uint8Array(modelBuffer), delegate: 'GPU' }
+      : { modelAssetPath: './assets/hand_landmarker.task', delegate: 'GPU' };
 
     const options = {
-      baseOptions: {
-        modelAssetPath: './assets/hand_landmarker.task',
-        delegate: 'GPU',
-      },
+      baseOptions,
       runningMode: 'VIDEO',
       numHands: 2,
       minHandDetectionConfidence: 0.6,
@@ -58,18 +185,30 @@ export class GestureController {
       minTrackingConfidence: 0.55,
     };
 
+    onProgress?.({ phase: 'init' });
+    performance.mark('mp:init-start');
+
+    // 记住上次成功的 delegate：移动端 GPU 常初始化失败，
+    // 若每次都先试 GPU 再退回 CPU，等于白等一次（几百毫秒）
+    const make = (delegate) => ({ ...options, baseOptions: { ...baseOptions, delegate } });
+    const preferred = readDelegate();
+
     try {
-      this.landmarker = await HandLandmarker.createFromOptions(vision, options);
+      this.landmarker = await HandLandmarker.createFromOptions(vision, make(preferred));
+      rememberDelegate(preferred);
     } catch (err) {
-      console.warn('GPU delegate failed, falling back to CPU', err);
-      options.baseOptions.delegate = 'CPU';
-      this.landmarker = await HandLandmarker.createFromOptions(vision, options);
+      const fallback = preferred === 'GPU' ? 'CPU' : 'GPU';
+      console.warn(`[gesture] ${preferred} delegate 初始化失败，改用 ${fallback}`, err);
+      this.landmarker = await HandLandmarker.createFromOptions(vision, make(fallback));
+      rememberDelegate(fallback);
     }
 
-    if (!navigator.mediaDevices || !window.isSecureContext) {
-      throw new Error('摄像头需要 https 或 localhost 环境');
-    }
+    performance.mark('mp:init-done');
+    performance.measure('mp:wasm', 'mp:wasm-start', 'mp:wasm-ready');
+    performance.measure('mp:init', 'mp:init-start', 'mp:init-done');
+  }
 
+  async _startCamera() {
     this.onStatus('正在请求摄像头权限…');
     this.stream = await navigator.mediaDevices.getUserMedia({
       video: {
@@ -86,10 +225,14 @@ export class GestureController {
       if (this.video.videoWidth > 0) return resolve();
       this.video.onloadedmetadata = () => resolve();
     });
+  }
 
-    this.ready = true;
-    this.onStatus('把手举到镜头前');
-    return true;
+  _stopCamera() {
+    if (this.stream) {
+      for (const track of this.stream.getTracks()) track.stop();
+      this.stream = null;
+    }
+    this.video.srcObject = null;
   }
 
   update(now) {
@@ -138,6 +281,7 @@ export class GestureController {
     this.state.handCount = hands.length;
     this.state.spread = this._computeSpread(hands);
     this.state.tray = this._computeTray(hands, now);
+    this.state.heart = this._computeHeart(hands, now);
     return this.state;
   }
 
@@ -166,6 +310,74 @@ export class GestureController {
     const pinchRaw = dist2(p(4), p(8)) / size;
     const pinch = clamp01(1 - (pinchRaw - 0.25) / 0.55);
 
+    // 「圈」：拇指尖与食指尖是否闭合，比心的关键判据。
+    // 门槛刻意放得比 pinch 宽：真人比心时两个指尖常留一两毫米缝，
+    // 640×480 下这点缝就足够让严格阈值判负 —— 之前比心一次都不出的主因之一。
+    // pinchRaw ≤ 0.30 → 1.0，≈0.72 → 0.5，≥1.15 → 0
+    const ring = clamp01(1 - (pinchRaw - 0.30) / 0.85);
+    const tipMid = { x: (p(4).x + p(8).x) / 2, y: (p(4).y + p(8).y) / 2 };
+
+    // 食指是否伸出：比心时食指是伸直向外张开的，半握拳时不是。
+    // 只用于辅助评分，不做硬判定，避免手势细节差异把人挡在外面。
+    const indexStraight = dist2(p(8), wrist) > dist2(p(6), wrist) * 1.12;
+
+    // 五指「抓取」程度：五个指尖收向掌心的程度，按手宽归一。
+    // 为什么不用「指尖聚成一点」（tipSpread）：那是「捏」的特征，
+    // 真人做「抓一把」时手指是各自向内钩的，指尖之间还留着间距，
+    // 只有「指尖离掌心越来越近」才是抓取。张开手掌 ≈1.0，抓握 ≈0.5~0.7。
+    const tips = [4, 8, 12, 16, 20];
+    let tipToPalm = 0;
+    for (const k of tips) tipToPalm += Math.hypot(p(k).x - palm.x, p(k).y - palm.y);
+    const clutchRaw = tipToPalm / tips.length / size;
+    const clutch = clamp01(1 - (clutchRaw - 0.66) / 0.34);
+
+    let tcx = 0;
+    let tcy = 0;
+    for (const k of tips) {
+      tcx += p(k).x;
+      tcy += p(k).y;
+    }
+    tcx /= tips.length;
+    tcy /= tips.length;
+    let tipSum = 0;
+    for (const k of tips) tipSum += Math.hypot(p(k).x - tcx, p(k).y - tcy);
+    // 按手宽归一：张开手掌约 0.55~0.75，五指捏一起约 0.12~0.20
+    const tipSpread = tipSum / tips.length / size;
+    const gather = clamp01(1 - (tipSpread - 0.22) / 0.30);
+
+    // 「打电话 / 比 6」：拇指和小指伸出，中间三指收拢。
+    // 这是最好认的手势之一（两个指头张得很开），也很少和别的手势撞车：
+    // 比心是拇指+食指成圈，抓取是五指全收，扇风要求掌面朝侧。
+    const thumbOut = clamp01((dist2(p(4), p(5)) / size - 0.42) / 0.36);
+    const pinkyOut = clamp01((dist2(p(20), wrist) / Math.max(0.001, dist2(p(18), wrist)) - 1.02) / 0.22);
+    let midCurled = 0;
+    for (const k of [0, 1, 2]) {
+      if (dist2(p(TIP[k]), wrist) <= dist2(p(PIP[k]), wrist) * 1.08) midCurled++;
+    }
+    const phone = clamp01(thumbOut * 0.34 + pinkyOut * 0.30 + (midCurled / 3) * 0.36);
+
+    // 「点赞」：拇指竖起朝上，其余四指全部收回。
+    // 三个分量：拇指伸得多开（thumbOut）、四指收得多彻底（fourCurled）、
+    // 拇指是不是**朝上**（upness，拇指方向向量的 y 分量）。
+    // 最后乘 pinkyKeep：小指一伸出去分数归零 —— 那是「比 6」，不能让两个手势互相抢。
+    let curled4 = 0;
+    for (let k = 0; k < 4; k++) {
+      if (dist2(p(TIP[k]), wrist) <= dist2(p(PIP[k]), wrist) * 1.10) curled4++;
+    }
+    const fourCurled = curled4 / 4;
+    const tv = { x: p(4).x - p(2).x, y: p(4).y - p(2).y };
+    const tvl = Math.hypot(tv.x, tv.y) || 1e-4;
+    const upness = clamp01((-tv.y / tvl - 0.20) / 0.50);   // y 轴朝下，取负才是「向上」
+    const pinkyKeep = 1 - clamp01((pinkyOut - 0.25) / 0.45);
+    // 拇指必须真的**伸出去**：握拳时拇指是横搭在指头上的，方向也朝上，
+    // 单看方向会把握拳判成点赞（实测拳头 upness 也是 1.0）。thumbOut 才是分水岭。
+    const thumbGate = clamp01((thumbOut - 0.25) / 0.35);
+    // 关掉 like 时直接给 0：否则「点赞姿态不准抓取」这条保护仍然生效，
+    // 抓取炸裂会被一个根本不播特效的手势按住
+    const like = GESTURE_SWITCH.like
+      ? clamp01(thumbOut * 0.40 + fourCurled * 0.32 + upness * 0.28) * pinkyKeep * thumbGate
+      : 0;
+
     // 掌面法线（3D，y 轴向下）
     const v1 = { x: p(5).x - p(0).x, y: p(5).y - p(0).y, z: p(5).z - p(0).z };
     const v2 = { x: p(17).x - p(0).x, y: p(17).y - p(0).y, z: p(17).z - p(0).z };
@@ -179,9 +391,21 @@ export class GestureController {
     const fl = Math.hypot(fingerDir.x, fingerDir.y) || 1;
     const fingerHorizontal = Math.abs(fingerDir.y / fl);
 
+    // 掌面「侧立」程度：掌心朝左 / 朝右，这是「扇风」和普通挥手的区别。
+    // nx 是相机空间法线的 x 分量；画面是镜像的，取负号后才和屏幕左右一致。
+    //   sideW = 1 → 掌心正对侧面（手竖起来）；0 → 掌心朝镜头或朝上
+    // 曲线刻意放得很宽（|nx| 0.28 起步、0.60 满分）：MediaPipe 的 3D 法线在
+    // 手掌侧对镜头时估得偏保守，真人「斜着侧立」常常只给到 0.5~0.6 的 |nx|，
+    // 用旧阈值会被判成「不是扇风」，于是手势怎么比都不转。
+    const palmSide = nx * SIDE_SIGN;
+    const sideW = smooth((Math.abs(nx) - 0.28) / 0.32)
+      * (1 - smooth((Math.abs(ny) - 0.58) / 0.34));
+
     let gesture = 'other';
     if (openness >= 0.75 && pinch < 0.45) gesture = 'open';
-    else if (openness <= 0.25) gesture = 'fist';
+    // 握拳被 GESTURE_SWITCH.fist 关掉时，这里直接不产出 'fist'：
+    // 下游的收拢（collapse）和张手炸裂（burst）都依赖这个标签，一处关掉两处都停。
+    else if (openness <= 0.25 && GESTURE_SWITCH.fist) gesture = 'fist';
     else if (pinch > 0.75) gesture = 'pinch';
 
     return {
@@ -192,7 +416,20 @@ export class GestureController {
       size,
       openness,
       pinch,
+      pinchRaw,
+      ring,
+      indexStraight,
+      tipSpread,
+      gather,
+      clutch,
+      clutchRaw,
+      phone,
+      like,
+      tipMid,
+      tipMidMirrored: { x: 1 - tipMid.x / aspect, y: tipMid.y },
       palmUp: Math.abs(ny) > 0.55 && fingerHorizontal < 0.55,
+      palmSide,                          // -1..1，正 = 掌心朝屏幕右侧
+      sideW,                             // 0..1，掌面侧立程度（扇风判据）
       palmFacing: nz,
       gesture,
       motion: { x: 0, y: 0 },
@@ -207,30 +444,112 @@ export class GestureController {
   }
 
   _detectEvents(hands, now) {
-    // 张手炸裂：握拳后 900ms 内快速张开
-    for (const h of hands) {
-      const st = this.handStates[h.label] || (this.handStates[h.label] = { fistAt: 0, wasFist: false });
-      if (h.gesture === 'fist') {
-        if (!st.wasFist) {
-          st.wasFist = true;
-          st.fistAt = now;
+    // 两手都在做「圈」＝比心姿态。它和拍手/炸裂都是「两手靠近 / 手指收拢」，
+    // 几何上容易撞车，所以这两个事件都先排除它。
+    const bothRinged = hands.length === 2 && hands[0].ring > 0.5 && hands[1].ring > 0.5;
+
+    // 张手炸裂：**单手抓取 → 1.2 秒内张开手掌**。
+    // 抓取的判据是「五个指尖一起收向掌心」（clutch），不是「指尖聚成一点」——
+    // 真人抓一把时手指是各自向内钩的，指尖之间还留着间距，用「捏」的几何去判会漏。
+    // 抓取至少保持 90ms 才算数，手掌扫过镜头不会平白炸一场雪。
+    if (GESTURE_SWITCH.burst) {
+      for (const h of hands) {
+        const st = this.handStates[h.label]
+          || (this.handStates[h.label] = { grabbed: false, grabFrom: 0, lastGrab: 0 });
+        // 点赞（四指收起）也是 clutch 很高的姿态，不排掉的话，
+        // 比完赞顺手张开五指就会平白炸一场雪
+        const grabbing = h.clutch > BURST_CFG.grab && h.openness < BURST_CFG.grabOpen
+          && h.like < LIKE_CFG.burstGuard;
+
+        if (grabbing) {
+          if (!st.grabbed) {
+            st.grabbed = true;
+            st.grabFrom = now;
+          }
+          st.lastGrab = now;
+        } else if (st.grabbed) {
+          const held = st.lastGrab - st.grabFrom;
+          const fresh = now - st.lastGrab < BURST_CFG.window;
+          if (!fresh) {
+            // 抓完直接放下了、也没张开 → 作废，别让下一次抬手平白炸雪
+            st.grabbed = false;
+          } else if (held >= BURST_CFG.hold && h.openness > BURST_CFG.open) {
+            st.grabbed = false;
+            if (!bothRinged && now - this.lastBurstAt > BURST_CFG.cooldown) {
+              this.lastBurstAt = now;
+              this.onEvent('burst', { strength: 1.0, hand: h });
+            }
+          }
         }
-      } else if (st.wasFist && h.openness > 0.75 && now - st.fistAt < 900) {
-        st.wasFist = false;
-        this.onEvent('burst', { strength: 0.75, hand: h });
-      } else if (h.openness > 0.75) {
-        st.wasFist = false;
       }
+    } else {
+      for (const k of Object.keys(this.handStates)) this.handStates[k].grabbed = false;
     }
 
-    // 拍手：两手快速靠近
-    const s = this._computeSpread(hands);
+    // 打电话 / 比 6 → 弹幕。两只手任一比出来都算，取分数高的那只。
+    // 稳住 240ms 才触发（摆手、换姿势时不会误触）；触发后必须把手放开/换姿势
+    // 才会再触发，所以一直比着不会刷屏，只是弹幕播完就停。
+    if (GESTURE_SWITCH.call) {
+      let best = null;
+      for (const h of hands) {
+        // 点赞姿态也可能攒到 0.75 分（四指全收 + 拇指伸得开），必须让位给点赞：
+        // 这两者只差一根小指，谁的判据更严就让谁先，否则比个大拇指会先飘出「打电话」。
+        if (h.like > 0.5) continue;
+        if (h.phone > 0.72 && (!best || h.phone > best.phone)) best = h;
+      }
+      if (best) {
+        if (!this.phoneOn) {
+          if (!this.phoneSince) this.phoneSince = now;
+          if (now - this.phoneSince > 240 && now - this.lastCallAt > 4000) {
+            this.phoneOn = true;
+            this.lastCallAt = now;
+            this.onEvent('call', { hand: best });
+          }
+        }
+      } else {
+        this.phoneSince = 0;
+        this.phoneOn = false;
+      }
+    } else {
+      this.phoneSince = 0;
+      this.phoneOn = false;
+    }
+
+    // 点赞（拇指竖起）→ 粒子大拇指 + 666。
+    // 和打电话同一套节流：稳住 240ms 才认，比着不放只出一轮，3 秒冷却兜底。
+    if (GESTURE_SWITCH.like) {
+      let best = null;
+      for (const h of hands) {
+        if (h.like > LIKE_CFG.threshold && (!best || h.like > best.like)) best = h;
+      }
+      if (best) {
+        if (!this.likeOn) {
+          if (!this.likeSince) this.likeSince = now;
+          if (now - this.likeSince > LIKE_CFG.hold && now - this.lastLikeAt > LIKE_CFG.cooldown) {
+            this.likeOn = true;
+            this.lastLikeAt = now;
+            this.onEvent('like', { hand: best });
+          }
+        }
+      } else {
+        this.likeSince = 0;
+        this.likeOn = false;
+      }
+    } else {
+      this.likeSince = 0;
+      this.likeOn = false;
+    }
+
+    // 拍手：两手快速靠近（GESTURE_SWITCH.clap 关掉时传 null，直接跳过）
+    const s = GESTURE_SWITCH.clap ? this._computeSpread(hands) : null;
     if (s !== null) {
+      // 拍手是「张开的手掌相击」。两手都在做圈形（比心姿态）靠近时不算拍手，
+      // 否则比心会被爆雪打断，还会顺手压制 300ms 的心形判定。
       if (s > 0.30) {
         this.farDist = s;
         this.farAt = now;
       }
-      if (s < 0.16 && this.farDist !== null && this.farDist > 0.26 && now - this.farAt < 700) {
+      if (!bothRinged && s < 0.16 && this.farDist !== null && this.farDist > 0.26 && now - this.farAt < 700) {
         if (now - this.lastClapAt > 500) {
           this.lastClapAt = now;
           this.onEvent('clap', { strength: 1.0 });
@@ -243,6 +562,13 @@ export class GestureController {
   }
 
   _computeTray(hands, now) {
+    if (!GESTURE_SWITCH.tray) {
+      if (this.trayActive) {
+        this.trayActive = false;
+        this.onEvent('trayOff', {});
+      }
+      return null;
+    }
     if (hands.length !== 1) {
       if (this.trayActive) {
         this.trayActive = false;
@@ -276,6 +602,131 @@ export class GestureController {
       y: h.palmMirrored.y,
       strength: h.openness,
     };
+  }
+
+  /**
+   * 双手比心：两只手各自把拇指尖和食指尖合上，并排举在身前组成心形。
+   *
+   * 为什么不用单手比心：单手「拇指+食指交叉」在 640×480 下两个指尖常常并成一团，
+   * 关键点分辨率只剩几个像素，而且和「捏合」是同一个几何构型，误触率很高。
+   * 双手比心多了一组约束（两手各自闭合 + 并排 + 等高 + 间距），稳定得多。
+   *
+   * 和「双手开合缩放」怎么区分 —— 两者都是两手捏着靠近，几何上几乎同构，
+   * 所以只用「保持不动」这一条物理上不同的信号来分：
+   *   缩放 = 指尖间距持续变化（rate 大）；比心 = 定住不动（rate→0）。
+   * 配合 260ms 保持 + 220ms 滞回，比心稳稳点亮，而拉拽时不会误闪。
+   */
+  _computeHeart(hands, now) {
+    const h = this.heart;
+    if (!GESTURE_SWITCH.heart) {
+      // 关掉时把状态清干净，避免残留 strength 让心形一直半亮
+      this.heartGap = null;
+      this.heartGapRate = 0;
+      this.heartHoldSince = 0;
+      this.heartOn = false;
+      h.strength = 0;
+      h.active = false;
+      return h;
+    }
+    const dt = this.heartLastAt ? Math.min(0.2, Math.max(0.008, (now - this.heartLastAt) / 1000)) : 0.016;
+    this.heartLastAt = now;
+    const probe = this.probe;
+
+    let cx = h.x;
+    let cy = h.y;
+    let radius = h.radius;
+    let score = 0;
+    let stage = hands.length === 2 ? 'ok' : 'hands';
+
+    if (hands.length === 2) {
+      const [a, b] = hands;
+      const sizeAvg = Math.max(0.02, (a.size + b.size) / 2);
+      const gap = Math.hypot(a.tipMid.x - b.tipMid.x, a.tipMid.y - b.tipMid.y) / sizeAvg;
+      const level = Math.abs(a.tipMid.y - b.tipMid.y) / sizeAvg;
+
+      // 两级平滑：先低通吃掉 MediaPipe 的逐帧抖动，再算速度。
+      // 否则摄像头噪声本身就会被当成「手在动」，比心永远点不亮。
+      const gs = this.heartGap === null
+        ? gap
+        : this.heartGap + (gap - this.heartGap) * HEART_CFG.gapSmooth;
+      if (this.heartGap === null) {
+        this.heartGapRate = 0;
+      } else {
+        const inst = Math.abs(gs - this.heartGap) / Math.max(dt, 0.008);
+        this.heartGapRate += (inst - this.heartGapRate) * HEART_CFG.rateSmooth;
+      }
+      this.heartGap = gs;
+
+      const ringScore = Math.min(a.ring, b.ring);
+      const gapScore = smooth((gap - HEART_CFG.gapNear) / (HEART_CFG.gapNearFull - HEART_CFG.gapNear))
+        * (1 - smooth((gap - HEART_CFG.gapFarFull) / (HEART_CFG.gapFarZero - HEART_CFG.gapFarFull)));
+      const levelScore = 1 - smooth((level - HEART_CFG.levelFull)
+        / (HEART_CFG.levelZero - HEART_CFG.levelFull));
+      const rateScore = 1 - smooth((this.heartGapRate - HEART_CFG.rateFull)
+        / (HEART_CFG.rateZero - HEART_CFG.rateFull));
+
+      // 食指伸出去一点是比心的常态；半握拳略降分，但不硬性否决
+      const straight = (a.indexStraight === false ? 0.85 : 1) * (b.indexStraight === false ? 0.85 : 1);
+
+      score = ringScore * gapScore * levelScore * rateScore * straight;
+
+      const ma = a.tipMidMirrored;
+      const mb = b.tipMidMirrored;
+      cx = (ma.x + mb.x) * 0.5;
+      cy = (ma.y + mb.y) * 0.5;
+      radius = Math.min(0.32, Math.max(0.09, Math.abs(ma.x - mb.x) * 1.05 + 0.07));
+
+      if (now - this.lastClapAt <= HEART_CFG.clapGuard) stage = 'clap';
+      else if (ringScore < HEART_CFG.ringGate) stage = 'ring';
+      else if (gapScore < 0.4) stage = gap < 0.3 ? 'near' : 'far';
+      else if (levelScore < 0.4) stage = 'level';
+      else if (rateScore < 0.4) stage = 'move';
+
+      probe.ringA = a.ring;
+      probe.ringB = b.ring;
+      probe.gap = gap;
+      probe.level = level;
+      probe.rate = this.heartGapRate;
+      probe.score = score;
+    } else {
+      this.heartGap = null;
+      this.heartGapRate = 0;
+      probe.ringA = probe.ringB = probe.gap = probe.level = probe.rate = probe.score = 0;
+    }
+
+    const cand = hands.length === 2
+      && now - this.lastClapAt > HEART_CFG.clapGuard
+      && score >= HEART_CFG.threshold;
+
+    let pose;
+    if (cand) {
+      this.heartOffSince = 0;
+      if (!this.heartHoldSince) this.heartHoldSince = now;
+      pose = now - this.heartHoldSince >= HEART_CFG.holdMs;
+      if (!pose) stage = 'hold';
+    } else if (this.heartOn) {
+      // 松手滞回：手抖一下不会让心形闪掉
+      if (!this.heartOffSince) this.heartOffSince = now;
+      pose = now - this.heartOffSince < HEART_CFG.releaseMs;
+    } else {
+      pose = false;
+      this.heartHoldSince = 0;
+    }
+
+    if (pose && !this.heartOn) this.onEvent('heart', {});
+    this.heartOn = pose;
+    probe.stage = pose ? 'on' : stage;
+
+    const target = pose ? 1 : 0;
+    h.strength += (target - h.strength) * (1 - Math.exp(-dt * (target ? 12 : 4.5)));
+    if (h.strength < 0.01) h.strength = 0;
+    h.active = h.strength > 0.06;
+
+    const k = 1 - Math.exp(-dt * 12);
+    h.x += (cx - h.x) * k;
+    h.y += (cy - h.y) * k;
+    h.radius += (radius - h.radius) * (1 - Math.exp(-dt * 8));
+    return h;
   }
 
   stop() {

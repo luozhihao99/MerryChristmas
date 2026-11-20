@@ -55,6 +55,7 @@ uniform float uSize;
 uniform float uBeat;
 uniform float uSwirl;
 uniform float uStorm;
+uniform float uLove;
 
 attribute float aSeed;
 attribute float aSize;
@@ -64,8 +65,8 @@ varying float vAlpha;
 
 void main(){
   vec3 p = position;
-  p.y = mod(p.y - uTime * aSpeed * (1.0 + uStorm * 2.0), 22.0) - 2.0;
-  p.x += sin(uTime * 0.52 + aSeed * 22.0) * (0.9 + uStorm * 2.5);
+  p.y = mod(p.y - uTime * aSpeed * (1.0 + uStorm * 2.0) * (1.0 - uLove * 0.5), 22.0) - 2.0;
+  p.x += sin(uTime * 0.52 + aSeed * 22.0) * (0.9 + uStorm * 2.5) * (1.0 - uLove * 0.55);
   p.z += cos(uTime * 0.44 + aSeed * 15.0) * 0.9;
   p.xz += normalize(p.xz + 0.001) * uSwirl * 1.4;
 
@@ -79,11 +80,14 @@ void main(){
 
 const snowFrag = /* glsl */`
 uniform sampler2D uMap;
+uniform float uLove;
 varying float vAlpha;
 void main(){
   float a = texture2D(uMap, gl_PointCoord).a;
   if (a < 0.01) discard;
-  gl_FragColor = vec4(vec3(0.82, 0.90, 1.0) * a * vAlpha, 1.0);
+  // 比心时雪从冷白渐变到玫瑰粉，像花瓣在飘
+  vec3 col = mix(vec3(0.82, 0.90, 1.0), vec3(1.0, 0.72, 0.84), uLove);
+  gl_FragColor = vec4(col * a * vAlpha, 1.0);
 }
 `;
 
@@ -242,6 +246,7 @@ export class SceneEffects {
         uBeat: { value: 0 },
         uSwirl: { value: 0 },
         uStorm: { value: 0 },
+        uLove: { value: 0 },
         uMap: { value: dotTexture() },
       },
       vertexShader: snowVert,
@@ -257,16 +262,19 @@ export class SceneEffects {
   }
 
   update(t, params) {
+    const love = params.love || 0;
     this.snowMat.uniforms.uTime.value = t;
     this.snowMat.uniforms.uBeat.value = params.beat;
     this.snowMat.uniforms.uSwirl.value = params.swirl;
     this.snowMat.uniforms.uStorm.value = params.storm;
+    this.snowMat.uniforms.uLove.value = love;
 
     this.bloom.strength = params.bloom;
     this.vignette.uniforms.uTime.value = t;
     this.vignette.uniforms.uWarmLift.value = params.warm * 0.8;
 
     this.groundGlow.material.opacity = 0.55 + params.beat * 0.35;
+    this.groundGlow.material.color.setRGB(1, 1 - love * 0.30, 1 - love * 0.16);
     this.skyStars.material.opacity = 0.42 + params.beat * 0.16;
   }
 
