@@ -41,6 +41,21 @@ const LIKE_CFG = {
 };
 
 /** 双手比心的软阈值。全部是「渐进打分」而不是硬与门，落到某一条不满足时会写进 probe.stage */
+/**
+ * 「单手 OK」：拇指和食指捏成圈，另外三根手指伸开。
+ *
+ * 和「捏合（pinch）」只差一件事 —— 另外三指是伸还是屈。捏合时手指多半收着，
+ * 比 OK 时是张开的，这一条把两者分得很干净。
+ * 和「比 6 / 打电话」也正好相反：那个是中间三指收拢、小指伸出。
+ *
+ * 整段特效 8.5 秒，所以冷却给到 9 秒：手势一直比着也只会完整放一轮。
+ */
+const OK_CFG = {
+  threshold: 0.62,
+  hold: 260,         // 稳住多久才认（抬手路过不算）
+  cooldown: 9000,
+};
+
 const HEART_CFG = {
   gapNear: 0.02, gapNearFull: 0.16,     // 两手指尖几乎重叠 → 更像拍手，降分
   gapFarFull: 1.30, gapFarZero: 1.90,   // 心形是两手并拢（约一拳内），拉得更开就是缩放
@@ -108,6 +123,10 @@ export class GestureController {
     this.likeSince = 0;
     this.likeOn = false;
     this.lastLikeAt = 0;
+
+    this.okSince = 0;
+    this.okOn = false;
+    this.lastOkAt = 0;
     this.lastBurstAt = 0;
 
     // 双手比心
@@ -134,6 +153,9 @@ export class GestureController {
    * @param {object} prefetched 由 assetLoader 预取的结果（可选）
    *   { wasmBase, modelBuffer, onProgress }
    * 模型下载与摄像头授权并行进行，谁先完成都不影响另一个。
+   *
+   * onStatus(cn, en) 会被三处调用：请求权限 → 启动识别 → 就绪。
+   * 首屏遮罩直接拿这三句当中英文案，所以英文必须一起给。
    */
   async init(prefetched = {}) {
     const {
@@ -147,7 +169,10 @@ export class GestureController {
     }
 
     // 先把摄像头权限问出来，别让用户盯着进度条等模型
+    let cameraDone = false;
     const cameraPromise = this._startCamera();
+    // 两个回调都给：只给成功那个的话，拒绝时这里会多一条 unhandled rejection
+    cameraPromise.then(() => { cameraDone = true; }, () => {});
     cameraPromise.catch(() => {});   // 稍后统一 await，这里只避免 unhandled rejection
 
     try {
@@ -157,15 +182,18 @@ export class GestureController {
       throw err;
     }
 
+    // 模型建完却还没就绪，只可能是在等摄像头 —— 文案说清楚，
+    // 免得用户以为「正在启动」这句卡死了（其实是权限弹窗还没人点）
+    if (!cameraDone) this.onStatus('正在等待摄像头…', 'Waiting for the camera…');
     await cameraPromise;
     performance.mark('mp:camera-ready');
     this.ready = true;
-    this.onStatus('把手举到镜头前');
+    this.onStatus('把手举到镜头前', 'Raise your hands to the camera');
     return true;
   }
 
   async _createLandmarker(wasmBase, modelBuffer, onProgress) {
-    this.onStatus('正在加载手势模型…');
+    this.onStatus('正在启动手势识别…', 'Starting hand tracking…');
     performance.mark('mp:wasm-start');
     const vision = await FilesetResolver.forVisionTasks(wasmBase);
     performance.mark('mp:wasm-ready');
@@ -209,7 +237,7 @@ export class GestureController {
   }
 
   async _startCamera() {
-    this.onStatus('正在请求摄像头权限…');
+    this.onStatus('正在请求摄像头权限…', 'Asking for camera access…');
     this.stream = await navigator.mediaDevices.getUserMedia({
       video: {
         width: { ideal: 640 },
@@ -378,6 +406,19 @@ export class GestureController {
       ? clamp01(thumbOut * 0.40 + fourCurled * 0.32 + upness * 0.28) * pinkyKeep * thumbGate
       : 0;
 
+    // 「OK」：拇指尖和食指尖捏成圈（ring 已经算过），同时中/无名/小指伸开。
+    // 还要让位给「比 6」：那个手势中间三指是收拢的，phone 分数高，直接扣到 0。
+    let ext3 = 0;
+    for (const k of [1, 2, 3]) {
+      if (dist2(p(TIP[k]), wrist) > dist2(p(PIP[k]), wrist) * 1.15) ext3++;
+    }
+    const ext3n = ext3 / 3;
+    const ok = GESTURE_SWITCH.ok
+      ? clamp01((ring - 0.42) / 0.42)
+        * clamp01((ext3n - 0.42) / 0.58)
+        * (1 - clamp01((phone - 0.55) / 0.45))
+      : 0;
+
     // 掌面法线（3D，y 轴向下）
     const v1 = { x: p(5).x - p(0).x, y: p(5).y - p(0).y, z: p(5).z - p(0).z };
     const v2 = { x: p(17).x - p(0).x, y: p(17).y - p(0).y, z: p(17).z - p(0).z };
@@ -425,6 +466,8 @@ export class GestureController {
       clutchRaw,
       phone,
       like,
+      ok,
+      ext3,
       tipMid,
       tipMidMirrored: { x: 1 - tipMid.x / aspect, y: tipMid.y },
       palmUp: Math.abs(ny) > 0.55 && fingerHorizontal < 0.55,
@@ -538,6 +581,33 @@ export class GestureController {
     } else {
       this.likeSince = 0;
       this.likeOn = false;
+    }
+
+    // 单手 OK → 爱心 / 流星雨 / 烟花 / miss you。
+    // 只在「画面里只有一只手」时判：双手比心时两只手的 ring 也都很高，
+    // 混进来会把比心当成 OK，满屏爱心先把心形盖掉了。
+    if (GESTURE_SWITCH.ok) {
+      let best = null;
+      if (hands.length === 1) {
+        const h = hands[0];
+        if (h.ok > OK_CFG.threshold) best = h;
+      }
+      if (best) {
+        if (!this.okOn) {
+          if (!this.okSince) this.okSince = now;
+          if (now - this.okSince > OK_CFG.hold && now - this.lastOkAt > OK_CFG.cooldown) {
+            this.okOn = true;
+            this.lastOkAt = now;
+            this.onEvent('ok', { hand: best });
+          }
+        }
+      } else {
+        this.okSince = 0;
+        this.okOn = false;
+      }
+    } else {
+      this.okSince = 0;
+      this.okOn = false;
     }
 
     // 拍手：两手快速靠近（GESTURE_SWITCH.clap 关掉时传 null，直接跳过）

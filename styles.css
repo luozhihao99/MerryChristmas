@@ -74,6 +74,16 @@ html,body{
   color:#f4dcb2;
 }
 .btn.primary:hover{ background:rgba(232,192,122,.22); }
+.btn.nudge{
+  border-color:rgba(232,192,122,.75);
+  color:rgba(255,240,214,.98);
+  animation:btn-nudge 2.4s ease-out infinite;
+}
+@keyframes btn-nudge{
+  0%   { box-shadow:0 0 0 0 rgba(232,192,122,.42); }
+  62%  { box-shadow:0 0 0 9px rgba(232,192,122,0); }
+  100% { box-shadow:0 0 0 0 rgba(232,192,122,0); }
+}
 .btn.help{
   width:26px; padding:7px 0; border-radius:50%;
   font-size:11px; color:var(--faint); line-height:1;
@@ -207,6 +217,153 @@ html,body{
 }
 .status.warn .dot{ background:#e2a15c; box-shadow:0 0 10px rgba(226,161,92,.7); }
 
+/* 播放音乐按钮：浏览器不给自动播放，就把「开始」做成一个明确的动作。
+   摆在正下方，离开其它 HUD 元素，一眼能看到；一圈缓慢呼吸的边框提示它可点。 */
+.play-pill{
+  position:absolute; left:50%; bottom:58px; transform:translateX(-50%);
+  display:flex; align-items:center; gap:9px;
+  padding:9px 18px 9px 15px;
+  border-radius:999px; cursor:pointer;
+  font:inherit; font-size:12.5px; letter-spacing:.12em;
+  color:rgba(255,240,214,.96);
+  background:rgba(28,20,10,.55);
+  border:1px solid rgba(232,192,122,.55);
+  backdrop-filter:blur(8px);
+  box-shadow:0 0 0 0 rgba(232,192,122,.34), 0 8px 26px rgba(0,0,0,.42);
+  animation:pp-pulse 2.6s ease-out infinite;
+  transition:background .2s ease, border-color .2s ease;
+}
+.play-pill:hover{ background:rgba(52,38,18,.72); border-color:rgba(246,214,150,.85); }
+.play-pill:active{ transform:translateX(-50%) scale(.97); }
+.play-pill[hidden]{ display:none; }
+.pp-ico{
+  font-size:14px; line-height:1;
+  color:#f2cf91; text-shadow:0 0 12px rgba(232,192,122,.75);
+}
+@keyframes pp-pulse{
+  0%   { box-shadow:0 0 0 0 rgba(232,192,122,.34), 0 8px 26px rgba(0,0,0,.42); }
+  62%  { box-shadow:0 0 0 13px rgba(232,192,122,0),  0 8px 26px rgba(0,0,0,.42); }
+  100% { box-shadow:0 0 0 0 rgba(232,192,122,0),     0 8px 26px rgba(0,0,0,.42); }
+}
+@media (prefers-reduced-motion: reduce){
+  .play-pill{ animation:none; }
+  .btn.nudge{ animation:none; }
+}
+/* 手机上没有空间：竖直方向被手势提示条占满，横向又只有 414px。
+   那里改用顶栏「播放」按钮上的金色描边来提示（见 .btn.nudge）。 */
+@media (max-width:760px){
+  .play-pill{ display:none !important; }
+}
+
+/* ---------------- 首屏「先听一首歌？」确认弹窗 ---------------- */
+
+.music-prompt{
+  position:fixed; inset:0; z-index:40;
+  display:flex; align-items:flex-end; justify-content:center;
+  /* 靠下放：把上面那半留给加载进度，弹窗出现时中英状态行和进度条都还看得见 */
+  padding:24px 24px max(30px, 8vh);
+  /* 只轻轻压暗：这张卡是「问一句」，不是阻断式模态，树还得看得见 */
+  background:radial-gradient(120% 90% at 50% 42%, rgba(4,8,14,.16), rgba(2,4,8,.34));
+  opacity:0; transition:opacity .3s ease;
+}
+.music-prompt[hidden]{ display:none; }
+.music-prompt.show{ opacity:1; }
+
+/* 矮屏（手机横屏、小窗）实在没地方分开摆，还是居中 */
+@media (max-height:760px){
+  .music-prompt{ align-items:center; padding:20px; }
+}
+
+.mp-card{
+  width:min(392px, 88vw);
+  padding:28px 26px 22px;
+  text-align:center;
+  border-radius:20px;
+  background:linear-gradient(180deg, rgba(17,25,37,.97), rgba(8,12,19,.99));
+  border:1px solid rgba(232,192,122,.26);
+  box-shadow:0 30px 80px rgba(0,0,0,.6), 0 0 52px rgba(232,192,122,.07),
+             inset 0 1px 0 rgba(255,255,255,.05);
+  transform:translateY(14px) scale(.97);
+  transition:transform .42s cubic-bezier(.22,.9,.25,1);
+}
+.music-prompt.show .mp-card{ transform:none; }
+
+.mp-ico{
+  width:44px; height:44px; margin:0 auto 15px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:19px; line-height:1;
+  color:rgba(255,232,190,.96);
+  border-radius:50%;
+  background:radial-gradient(circle at 50% 38%, rgba(232,192,122,.26), rgba(232,192,122,.05));
+  border:1px solid rgba(232,192,122,.36);
+  animation:mp-pulse 3s ease-in-out infinite;
+}
+@keyframes mp-pulse{
+  0%,100%{ box-shadow:0 0 20px rgba(232,192,122,.16), inset 0 0 12px rgba(232,192,122,.08); }
+  50%{ box-shadow:0 0 36px rgba(232,192,122,.34), inset 0 0 18px rgba(232,192,122,.14); }
+}
+
+.mp-title{
+  margin:0; font-size:18px; font-weight:400; letter-spacing:.16em;
+  color:rgba(255,247,232,.97);
+}
+.mp-title-en{
+  margin:8px 0 0; font-size:10.5px; letter-spacing:.22em;
+  color:rgba(232,192,122,.72); text-transform:uppercase;
+}
+.mp-desc{
+  margin:16px 0 0; font-size:12px; line-height:1.6;
+  color:rgba(226,235,244,.62);
+}
+.mp-desc em{
+  display:block; margin-top:5px; font-style:normal;
+  font-size:10.5px; line-height:1.6; color:rgba(226,235,244,.34);
+}
+
+.mp-actions{ margin-top:22px; display:flex; gap:10px; }
+.mp-btn{
+  flex:1 1 0; min-width:0;
+  display:flex; flex-direction:column; align-items:center; gap:4px;
+  padding:10px 8px 9px; border-radius:12px; cursor:pointer; font:inherit;
+  color:rgba(233,241,250,.86);
+  background:rgba(255,255,255,.04);
+  border:1px solid rgba(190,214,236,.18);
+  transition:color .2s ease, border-color .2s ease, background .2s ease, transform .16s ease;
+}
+.mp-btn .mb-cn{ font-size:12.5px; letter-spacing:.06em; white-space:nowrap; }
+.mp-btn .mb-en{
+  font-style:normal; font-size:9px; letter-spacing:.14em;
+  color:rgba(226,235,244,.36);
+}
+.mp-btn:hover{ color:#fff; border-color:rgba(190,214,236,.36); background:rgba(255,255,255,.07); }
+.mp-btn:active{ transform:scale(.98); }
+
+.mp-btn.primary{
+  color:#20160a;
+  background:linear-gradient(180deg, #f6dbaa, #e5bb7a);
+  border-color:rgba(255,228,182,.72);
+  box-shadow:0 8px 26px rgba(232,192,122,.22), inset 0 1px 0 rgba(255,255,255,.55);
+}
+.mp-btn.primary .mb-en{ color:rgba(58,38,12,.6); }
+.mp-btn.primary:hover{ background:linear-gradient(180deg, #ffe6b8, #eec887); }
+.mp-btn[disabled]{ pointer-events:none; opacity:.75; }
+
+.loading-skip{
+  display:block; margin:18px auto 0;
+  padding:8px 15px 7px; border-radius:999px; cursor:pointer; font:inherit;
+  color:rgba(214,228,244,.72);
+  background:rgba(255,255,255,.04);
+  border:1px solid rgba(190,214,236,.18);
+  transition:color .2s ease, border-color .2s ease, background .2s ease;
+}
+.loading-skip span{ display:block; font-size:11.5px; letter-spacing:.09em; }
+.loading-skip em{
+  display:block; margin-top:3px; font-style:normal;
+  font-size:8.5px; letter-spacing:.12em; color:rgba(226,235,244,.3);
+}
+.loading-skip:hover{ color:rgba(245,250,255,.95); border-color:rgba(190,214,236,.4); background:rgba(255,255,255,.08); }
+.loading-skip[hidden]{ display:none; }
+
 .score{
   position:absolute; right:26px; bottom:52px;
   text-align:right; opacity:0; transition:opacity .4s ease;
@@ -230,27 +387,139 @@ html,body{
 }
 #loading.done{ opacity:0; visibility:hidden; }
 
-.loading-inner{ text-align:center; width:min(420px, 78vw); }
+.loading-inner{ text-align:center; width:min(420px, 82vw); }
 .loading-title{
   font-size:26px; font-weight:300; letter-spacing:.26em;
   color:rgba(255,246,230,.95);
   text-shadow:0 0 40px rgba(232,192,122,.3);
 }
-.loading-sub{
-  margin-top:14px; font-size:12px; letter-spacing:.1em; color:var(--muted);
-  min-height:16px;
+
+/* 状态行：左边「在做什么」（中英双行），右边「到几成」 */
+.loading-status{
+  margin-top:16px;
+  display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+  min-height:34px;
 }
+.ls-text{
+  display:flex; flex-direction:column; gap:5px; min-width:0; text-align:left;
+}
+.loading-sub{
+  display:inline-flex; align-items:center; gap:8px; min-width:0;
+  font-size:11.5px; letter-spacing:.1em; color:rgba(230,239,248,.74);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+/* 英文副标题：小一号、暗一档，和中文错开层级，不抢主文案 */
+.loading-sub-en{
+  padding-left:13px;                 /* 跳过呼吸点(5px)+gap(8px)，与中文文字对齐 */
+  font-size:10px; letter-spacing:.1em; line-height:1.25;
+  color:rgba(226,235,244,.4);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  transition:color .3s ease;
+}
+/* 文本换句时淡入上滑，别硬切 */
+.loading-sub.swap,
+.loading-sub-en.swap{ animation: load-swap .42s cubic-bezier(.22,.9,.25,1); }
+@keyframes load-swap{
+  from{ opacity:.1; transform: translateY(4px); }
+  to{ opacity:1; transform: translateY(0); }
+}
+/* 前面那颗呼吸的点：表示「还在动，没死」 */
+.loading-sub::before{
+  content:''; flex:none;
+  width:5px; height:5px; border-radius:50%;
+  background:rgba(232,192,122,.95);
+  box-shadow:0 0 9px rgba(232,192,122,.85);
+  animation: load-dot 1.5s ease-in-out infinite;
+}
+@keyframes load-dot{
+  0%,100%{ opacity:.35; transform:scale(.82); }
+  50%{ opacity:1; transform:scale(1); }
+}
+
+.loading-pct{
+  flex:none;
+  display:inline-flex; align-items:baseline;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  line-height:1;
+}
+.loading-pct b{
+  font-weight:300; font-size:21px; letter-spacing:.01em;
+  color:rgba(255,240,212,.96);
+  text-shadow:0 0 18px rgba(232,192,122,.5);
+}
+.loading-pct i{
+  font-style:normal; font-size:10px; margin-left:2px;
+  color:rgba(232,192,122,.7);
+}
+
 .loading-bar{
-  margin:22px auto 0; width:190px; height:1px;
-  background:rgba(190,214,236,.16); overflow:hidden;
+  position:relative;
+  margin:11px 0 0; width:100%; height:4px; border-radius:2px;
+  background:rgba(190,214,236,.14);
+  box-shadow: inset 0 0 0 1px rgba(190,214,236,.05);
+  overflow:hidden;
 }
 .loading-bar i{
-  display:block; height:100%; width:0%;
-  background:linear-gradient(90deg, rgba(232,192,122,0), #e8c07a);
-  transition:width .5s ease;
+  position:relative; z-index:1;
+  display:block; height:100%; width:0%; border-radius:2px;
+  /* 起点不要全透明：现在这条要表达「模型下到几成」，
+     左半截虚掉会让人以为进度只有一点点 */
+  background:linear-gradient(90deg, rgba(232,192,122,.32), #eec483 48%, #fff1d4);
+  box-shadow:0 0 12px rgba(232,192,122,.5), 0 0 26px rgba(232,192,122,.22);
+  transition:width .45s cubic-bezier(.25,.9,.25,1);
+  overflow:hidden;
 }
+/* 一条白光反复扫过填充段：进度条在走，而不是一张静态图 */
+.loading-bar i::before{
+  content:''; position:absolute; top:0; left:-56px;
+  width:52px; height:100%;
+  background:linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.75), rgba(255,255,255,0));
+  animation: bar-shine 2.4s cubic-bezier(.4,0,.3,1) infinite;
+}
+@keyframes bar-shine{
+  0%{ transform: translateX(0); opacity:0; }
+  12%{ opacity:.95; }
+  70%{ opacity:.95; }
+  100%{ transform: translateX(500px); opacity:0; }
+}
+/* 模型还不知道总量 / 正在等网络：空档里跑一道暗金光，
+   让「进度暂时不走」和「卡死了」看起来不一样 */
+.loading-bar.is-wait::after{
+  content:''; position:absolute; top:0; bottom:0; left:0; width:32%;
+  background:linear-gradient(90deg, rgba(232,192,122,0), rgba(232,192,122,.4), rgba(232,192,122,0));
+  animation: bar-wait 1.9s ease-in-out infinite;
+}
+@keyframes bar-wait{
+  0%{ transform: translateX(-120%); opacity:0; }
+  25%{ opacity:1; }
+  100%{ transform: translateX(360%); opacity:0; }
+}
+
 .loading-note{
-  margin-top:20px; font-size:10.5px; letter-spacing:.08em; color:rgba(226,235,244,.28);
+  margin-top:17px; font-size:10.5px; letter-spacing:.08em; color:rgba(226,235,244,.3);
+}
+.loading-note em{
+  display:block; margin-top:4px; font-style:normal;
+  font-size:9.5px; letter-spacing:.1em; color:rgba(226,235,244,.26);
+}
+
+/* 窄屏：一行里塞得下「十个汉字 + 百分比」才算信息完整 */
+@media (max-width:520px){
+  .loading-sub{ font-size:11px; letter-spacing:.05em; gap:6px; }
+  .loading-pct b{ font-size:19px; }
+}
+
+/* 关掉动效时，进度信息仍然完整（数字照常走，只是不扫光、不呼吸） */
+@media (prefers-reduced-motion: reduce){
+  .loading-sub.swap{ animation:none; }
+  .loading-sub::before{ animation:none; opacity:.7; }
+  .loading-bar i::before{ animation:none; opacity:0; }
+  .loading-bar.is-wait::after{ animation:none; opacity:0; }
+  .loading-bar i{ transition:width .2s linear; }
+  .mp-ico{ animation:none; }
+  .mp-card{ transition:none; }
+  .music-prompt{ transition:none; }
 }
 
 @media (max-width: 900px){
@@ -269,7 +538,17 @@ html,body{
   .brand-cn{ display:none; }
   .audio-bar{ padding:5px 7px; gap:6px; }
   .btn{ padding:6px 9px; font-size:11px; }
-  .btn.help{ width:22px; padding:6px 0; }
+  .btn.nudge{
+  border-color:rgba(232,192,122,.75);
+  color:rgba(255,240,214,.98);
+  animation:btn-nudge 2.4s ease-out infinite;
+}
+@keyframes btn-nudge{
+  0%   { box-shadow:0 0 0 0 rgba(232,192,122,.42); }
+  62%  { box-shadow:0 0 0 9px rgba(232,192,122,0); }
+  100% { box-shadow:0 0 0 0 rgba(232,192,122,0); }
+}
+.btn.help{ width:22px; padding:6px 0; }
   /* 窄屏放不下曲名，改为在底部状态条里显示 */
   .track{ display:none; }
   .music-help{ width:min(300px, 86vw); padding:12px 13px 10px; }

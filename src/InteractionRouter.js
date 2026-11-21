@@ -41,6 +41,7 @@ export class InteractionRouter {
     this.heartFlash = 0;
     this.callFlash = 0;
     this.likeFlash = 0;
+    this.okFlash = 0;
 
     // 侧掌扇风 → 绕中轴旋转
     this.spin = 0;         // 累积角度（弧度，取模 2π）
@@ -76,6 +77,9 @@ export class InteractionRouter {
     } else if (type === 'like') {
       // 点赞同理：粒子图案自己演，这里只负责 HUD 高亮
       this.likeFlash = 1;
+    } else if (type === 'ok') {
+      // OK 那段有 8 秒多，HUD 那条提示跟着亮得久一点，别一秒就灭
+      this.okFlash = 1;
     }
   }
 
@@ -181,6 +185,8 @@ export class InteractionRouter {
     if (this.callFlash < 0.004) this.callFlash = 0;
     this.likeFlash *= Math.exp(-dt * 0.85);
     if (this.likeFlash < 0.004) this.likeFlash = 0;
+    this.okFlash *= Math.exp(-dt * 0.42);
+    if (this.okFlash < 0.004) this.okFlash = 0;
 
     if (this.explode < 0.002) this.explode = 0;
     if (this.storm < 0.002) this.storm = 0;
@@ -231,6 +237,7 @@ export class InteractionRouter {
     if (this.love > 0.3) a.add('heart');
     if (this.callFlash > 0.15) a.add('call');
     if (this.likeFlash > 0.15) a.add('like');
+    if (this.okFlash > 0.15) a.add('ok');
 
     return params;
   }

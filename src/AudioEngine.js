@@ -1,14 +1,16 @@
 /**
  * 音频源 + 频谱分析。
  *
- * 两种播放模式，自动选择：
- *   buffer  —— decodeAudioData 整首解码进内存。循环、定位最准，适合短文件。
- *   element —— <audio> + MediaElementAudioSourceNode 流式播放。
- *              不占内存，且能吃下浏览器能播的任何编码（m4a / 长音频）。
+ * 两种播放模式：
+ *   element —— <audio> + MediaElementAudioSourceNode。**远端音频一律走这条**：
+ *              元数据一到就能播，剩下的字节按 Range 边播边拉，内存只占几十 KB。
+ *              能吃下浏览器能播的任何编码（m4a / mp3 / 长音频）。
+ *   buffer  —— decodeAudioData 整首解码进内存。只给本地拖进来的**小文件**用：
+ *              本地读盘本来就是毫秒级，换来的是无缝循环和精确定位。
  *
- * 为什么要两套：手机上 decode 一首 5 分钟的歌要约 100MB AudioBuffer，
- * Safari 经常直接抛错或整页崩溃；流式模式内存只有几十 KB。
- * 先试 decode（短文件），失败或文件过大就自动退到 element。
+ * 为什么远端不 decode：手机上 decode 一首 5 分钟的歌要约 100MB AudioBuffer，
+ * Safari 经常直接抛错或整页崩溃；而且必须先下完整个文件才能解码 ——
+ * 那就是「加载很慢」的根源。流式只要前几十 KB 就能出声。
  */
 export class AudioEngine {
   constructor() {
@@ -32,6 +34,8 @@ export class AudioEngine {
     this.url = null;
     this.duration = 0;
     this.lastError = null;
+    this._seq = 0;               // 加载令牌：新加载 / 主动取消都会把它加一，旧的立刻作废
+    this._pendingReject = null;
     // 频谱能不能读。跨域媒体接不进 analyser（浏览器会静音），此时只能纯播，
     // 呼吸律动退回内置 demoBeat，总比没声音好。
     this.analysable = true;
@@ -77,10 +81,10 @@ export class AudioEngine {
 
   /**
    * 同一个音频要不要先走本地服务器代理。
-   * 直链基本都不发 CORS 头：直接 fetch 会被拦，跨域 <audio> 接进 Web Audio
-   * 又会被判成「污染」直接静音 —— 两条路都读不到频谱。
-   * serve.py 提供了 /__audio 同源代理，走它能整首解码，呼吸才真的跟着鼓点走。
-   * 没起 serve.py（或部署到别处）时这个请求会 404，自动退回直连。
+   * 直链不发 CORS 头时：直接挂 <audio crossorigin> 会被拦，跨域 <audio> 接进
+   * Web Audio 又会被判成「污染」直接静音 —— 两条路都读不到频谱。
+   * serve.py 提供了 /__audio 同源代理（透传 Range、边收边发），走它仍是流式。
+   * 没起 serve.py（或部署到静态托管）时这个请求会 404 / 连不上，自动跳过。
    */
   static proxyUrl(url) {
     if (!/^https?:$/.test(location.protocol)) return null;
@@ -92,6 +96,13 @@ export class AudioEngine {
     return `${location.origin}/__audio?url=${encodeURIComponent(url)}`;
   }
 
+  /** 主动放弃当前加载：页面等不了时说一声，别让三条路各耗 8 秒 */
+  cancel() {
+    this._seq += 1;
+    this._dropEl();
+    this.stop();
+  }
+
   /**
    * 加载一个 File。
    * 返回 { duration, mode }，mode 是实际生效的模式。
@@ -101,6 +112,7 @@ export class AudioEngine {
     this.ensureContext();
     if (this.ctx.state === 'suspended') await this.ctx.resume();
     this.stop();
+    this._dropEl();          // 若有远端加载还挂着，先掐掉，别让两条请求互相拆台
     this.lastError = null;
     this.name = (file.name || '未命名').replace(/\.[^.]+$/, '');
     this.duration = 0;
@@ -168,27 +180,24 @@ export class AudioEngine {
   /**
    * 建立（或复用）<audio> 元素。
    * linked 决定要不要接进 Web Audio 图：
-   *   同源（blob / 本地文件）→ 接，能同时出声 + 分析频谱；
-   *   跨域远端 url → 不接，接了会被浏览器判成「污染」输出静音。
+   *   同源（blob / 本地文件 / 本地代理）→ 接，能同时出声 + 分析频谱；
+   *   跨域且没 CORS → 不能接，接了会被浏览器判成「污染」输出静音。
    * 同一个元素一旦接过 MediaElementAudioSourceNode 就退不回来，所以两种模式必须换元素。
+   * crossOrigin 也要参与比较：先试 anonymous、失败再试不带 CORS 时，
+   * 必须换一个干净的元素，否则旧的跨域状态会把新地址也判死。
    */
-  _ensureEl(linked) {
-    if (this.el && this.elLinked === linked) return this.el;
-
-    if (this.el) {
-      try { this.el.pause(); } catch (e) { /* 忽略 */ }
-      this.el.removeAttribute('src');
-      if (this.elSource) {
-        try { this.elSource.disconnect(); } catch (e) { /* 忽略 */ }
-      }
-      this.el = null;
-      this.elSource = null;
+  _ensureEl(linked, crossOrigin = null) {
+    const wantCO = crossOrigin || null;
+    if (this.el && this.elLinked === linked && (this.el.crossOrigin || null) === wantCO) {
+      return this.el;
     }
+    this._dropEl();
 
     const el = new Audio();
     el.loop = true;
     el.preload = 'auto';
     el.volume = linked ? 1 : 0.9;
+    if (wantCO) el.crossOrigin = wantCO;      // 必须在设 src 之前
     if (linked) {
       this.elSource = this.ctx.createMediaElementSource(el);
       this.elSource.connect(this.gain);
@@ -198,13 +207,35 @@ export class AudioEngine {
     return el;
   }
 
+  /** 丢弃当前 <audio>，并真正中止它挂起的请求（换地址 / 失败重试时用） */
+  _dropEl() {
+    // 先叫醒还在 _waitMeta 里等的人：元素一旦被拆，loadedmetadata / error
+    // 都不会再来，不主动 reject 就得干等到超时（15 秒）。
+    if (this._pendingReject) {
+      const reject = this._pendingReject;
+      this._pendingReject = null;
+      reject(new Error('加载已被新的请求取代'));
+    }
+    if (!this.el) return;
+    const el = this.el;
+    try { el.pause(); } catch (e) { /* 忽略 */ }
+    el.removeAttribute('src');
+    try { el.load(); } catch (e) { /* 忽略：load() 才会中止在途请求 */ }
+    if (this.elSource) {
+      try { this.elSource.disconnect(); } catch (e) { /* 忽略 */ }
+    }
+    this.el = null;
+    this.elSource = null;
+    this.elLinked = false;
+  }
+
   /** 等元数据就绪；已缓存的情况不会再次触发 loadedmetadata，所以先查 readyState */
-  _waitMeta(el) {
+  _waitMeta(el, timeout = 8000) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         cleanup();
         reject(new Error('读取音频信息超时'));
-      }, 12000);
+      }, timeout);
       const onReady = () => { cleanup(); resolve(); };
       const onError = () => {
         cleanup();
@@ -214,9 +245,12 @@ export class AudioEngine {
       };
       const cleanup = () => {
         clearTimeout(timer);
+        this._pendingReject = null;
         el.removeEventListener('loadedmetadata', onReady);
         el.removeEventListener('error', onError);
       };
+      // 被 _dropEl 打断时走这条，别等到超时
+      this._pendingReject = (err) => { cleanup(); reject(err); };
       el.addEventListener('loadedmetadata', onReady);
       el.addEventListener('error', onError);
       if (el.readyState >= 1 && isFinite(el.duration) && el.duration > 0) onReady();
@@ -224,60 +258,90 @@ export class AudioEngine {
   }
 
   /**
+   * 把一个远端地址挂到 <audio> 上，只等元数据（不是等下载完）。
+   * 元数据一到就返回：此刻 duration 已知、可以 play()，剩下的字节由浏览器
+   * 按 Range 自己边播边拉 —— 这就是「流式」和「整首下完再播」的区别。
+   */
+  async _streamUrl(url, { crossOrigin = null, linked = true, timeout = 8000 } = {}) {
+    const el = this._ensureEl(linked, crossOrigin);
+    this.duration = 0;                        // 换地址了，旧时长立即作废
+    el.src = url;
+    try { el.load(); } catch (e) { /* 某些浏览器没有 load，忽略 */ }
+    await this._waitMeta(el, timeout);
+    this.duration = isFinite(el.duration) && el.duration > 0 ? el.duration : 0;
+    this.mode = 'element';
+    this.analysable = linked;
+    return { duration: this.duration, mode: 'element', analysable: linked, streaming: true };
+  }
+
+
+  /**
    * 加载一个远端音频 URL（默认音乐走这条路）。
    *
-   * 两种可能，自动取舍：
-   *   A. 对方带 CORS 头 → fetch 成 blob 再整首解码，循环无缝且频谱可用；
-   *   B. 没有 CORS（大多数图床/直链都这样）→ fetch 会被拦，退回 <audio> 直连，
-   *      能出声但没有频谱，呼吸律动交回内置节奏。
+   * **流式优先，绝不整首下完再播。** 先把地址挂到 <audio> 上，元数据一到就算就绪，
+   * 用户一点立刻出声；剩下的字节由浏览器按 Range 自己边播边拉。
+   * 以前那版是 fetch 成 Blob → decodeAudioData → 才播，等于「等整首 + 解码完」
+   * 才开始，一首 2.3MB 的歌在慢网要卡十几秒。
+   *
+   * 三条路，按「快 → 稳」依次尝试：
+   *   1. 直连 + crossorigin="anonymous"：COS / 任何配了 CORS 的 CDN。
+   *      最快（少一跳），而且带 CORS 头的媒体接进 Web Audio 不算污染，频谱能读。
+   *   2. 同源代理 /__audio：源站没发 CORS 头时的本地兜底（serve.py 透传 Range）。
+   *   3. 裸直连（不带 crossorigin）：能出声，但元素被污染、读不到频谱，
+   *      呼吸退回内置节拍。总比没声音好。
+   *
+   * opts.onPhase(phase, info)：'connect'（正在连某条路）/ 'ready'（可以播了）。
+   * 流式下没有「下载百分比」可报 —— 起播只要前几十 KB，百分比反而误导人。
    */
-  async loadUrl(url, name = '') {
+  async loadUrl(url, name = '', opts = {}) {
     this.ensureContext();
     this.stop();
     this.lastError = null;
     this.name = name || decodeURIComponent((url.split('/').pop() || '').split('?')[0]).replace(/\.[^.]+$/, '');
     this.duration = 0;
     this.offset = 0;
+    this.analysable = true;
 
-    // A. 先试着取回来整首解码（同源代理 → 直连 CORS，能成哪个用哪个）
-    const targets = [];
+    const seq = ++this._seq;
+    const onPhase = typeof opts.onPhase === 'function' ? opts.onPhase : null;
+    const emit = (phase, info) => {
+      if (!onPhase) return;
+      try { onPhase(phase, info); } catch (e) { /* UI 报错不该拖垮加载 */ }
+    };
+
+    const attempts = [];
+    attempts.push({ via: 'direct-cors', url, crossOrigin: 'anonymous', linked: true });
     const proxied = AudioEngine.proxyUrl(url);
-    if (proxied) targets.push(proxied);
-    targets.push(url);
+    if (proxied) attempts.push({ via: 'proxy', url: proxied, crossOrigin: null, linked: true });
+    attempts.push({ via: 'direct-plain', url, crossOrigin: null, linked: false });
 
-    for (const target of targets) {
+    for (const attempt of attempts) {
+      if (seq !== this._seq) {
+        throw Object.assign(new Error('加载已取消'), { code: 'cancelled' });
+      }
+      emit('connect', { via: attempt.via });
       try {
-        const res = await fetch(target, { mode: 'cors', credentials: 'omit' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const blob = await res.blob();
-        if (!blob.size) throw new Error('空响应');
-        if (blob.size <= AudioEngine.decodeLimit()) {
-          this.buffer = await this._decode(await blob.arrayBuffer());
-          this.mode = 'buffer';
-          this.duration = this.buffer.duration;
-          this.analysable = true;
-          return { duration: this.duration, mode: this.mode, analysable: true };
-        }
-        // 太大就当作本地文件走 blob + element（同源，仍可分析）
-        await this._loadElement(new File([blob], 'remote.mp3', { type: blob.type || 'audio/mpeg' }));
-        this.mode = 'element';
-        return { duration: this.duration, mode: this.mode, analysable: true };
+        const out = await this._streamUrl(attempt.url, {
+          crossOrigin: attempt.crossOrigin,
+          linked: attempt.linked,
+          timeout: opts.timeout || 8000,
+        });
+        emit('ready', { via: attempt.via, duration: out.duration, analysable: out.analysable });
+        return out;
       } catch (err) {
         this.lastError = err;
-        this.buffer = null;
+        this._dropEl();
+        if (seq !== this._seq) {
+          throw Object.assign(new Error('加载已取消'), { code: 'cancelled' });
+        }
+        console.warn(`[audio] ${attempt.via} 方式加载失败`, err);
       }
     }
 
-    console.warn('[audio] 取不到可解码的音频（多半是没开 CORS 且没有本地代理），改为直连播放', this.lastError);
-
-    // B. 直连 <audio>：能出声，读不到频谱
-    const el = this._ensureEl(false);
-    el.src = url;
-    await this._waitMeta(el);
-    this.duration = isFinite(el.duration) ? el.duration : 0;
-    this.mode = 'element';
-    this.analysable = false;
-    return { duration: this.duration, mode: this.mode, analysable: false };
+    throw Object.assign(new Error('音频加载失败'), {
+      code: 'unsupported',
+      cause: this.lastError,
+    });
   }
 
   play(from = 0) {
@@ -288,10 +352,14 @@ export class AudioEngine {
     if (this.mode === 'element') {
       const el = this.el;
       if (!el || !el.src) return false;
-      try {
-        const dur = isFinite(el.duration) && el.duration > 0 ? el.duration : 0;
-        el.currentTime = dur ? from % dur : 0;
-      } catch (e) { /* 元数据还没就绪，忽略 */ }
+      // 从头播时别去碰 currentTime：流式音频上这一下会触发一次 seek，
+      // 浏览器得重新要一段数据才开始出声，白白多等一两百毫秒。
+      if (from > 0) {
+        try {
+          const dur = isFinite(el.duration) && el.duration > 0 ? el.duration : 0;
+          el.currentTime = dur ? from % dur : 0;
+        } catch (e) { /* 元数据还没就绪，忽略 */ }
+      }
       const p = el.play();
       if (p && p.catch) {
         p.catch((err) => {

@@ -11,11 +11,40 @@
 <script type="importmap">
 {
   "imports": {
-    "three": "./vendor/three/three.module.js",
+    "three": "./vendor/three/three.module.min.js",
     "three/addons/": "./vendor/three/addons/"
   }
 }
 </script>
+<!--
+  首屏关键路径的两次加速，都是「把发现依赖的时间提前到解析 HTML 时」：
+
+  1. modulepreload：ES module 是「下载 main.js → 解析 → 才知道它 import 谁」的瀑布，
+     每层多一个 RTT。modulepreload 把整张依赖图摊平，和 HTML 一起并发下载。
+     换成了压缩版 three（1.27MB → 655KB，gzip 252KB → 165KB），解析也更快。
+  2. 见下面第 3 条：模型预取也提前到了 head。
+-->
+<link rel="modulepreload" href="./vendor/three/three.module.min.js" />
+<link rel="modulepreload" href="./src/main.js" />
+<link rel="modulepreload" href="./src/ParticleTree.js" />
+<link rel="modulepreload" href="./src/SceneEffects.js" />
+<link rel="modulepreload" href="./src/GestureController.js" />
+<link rel="modulepreload" href="./vendor/mediapipe/vision_bundle.mjs" />
+<link rel="modulepreload" href="./vendor/three/addons/postprocessing/EffectComposer.js" />
+<link rel="modulepreload" href="./vendor/three/addons/postprocessing/RenderPass.js" />
+<link rel="modulepreload" href="./vendor/three/addons/postprocessing/ShaderPass.js" />
+<link rel="modulepreload" href="./vendor/three/addons/postprocessing/UnrealBloomPass.js" />
+<link rel="modulepreload" href="./vendor/three/addons/postprocessing/OutputPass.js" />
+<!--
+  3. 模型预取分两步走，缺一不可：
+     · preload 让 7.6MB 的 .task 在解析 HTML 时就开下（+13ms）。只靠 JS 发不出来 ——
+       首帧建场会把主线程堵住近一秒，那期间任何 fetch 都只能排队到 +1.3s。
+     · modelPreload.js（只依赖 3KB 的 assetLoader）随后接管同一个请求读流，
+       于是进度是真的、失败还能回落 CDN。两边凭据模式必须一致（都是
+       CORS + same-origin），否则浏览器不复用预取，模型会被下两遍。
+-->
+<script type="module" src="./src/modelPreload.js"></script>
+<link rel="preload" href="./assets/hand_landmarker.task" as="fetch" crossorigin="anonymous" />
 </head>
 <body>
 <canvas id="scene"></canvas>
@@ -65,8 +94,9 @@
     <div class="hint" data-k="slide"><b>侧掌扇风</b><span>掌心朝侧 · 左右扇 → 树绕轴转</span></div>
     <div class="hint" data-k="tray"><b>掌心向上</b><span>托盘接礼物</span></div>
     <div class="hint" data-k="heart"><b>双手比心</b><span>两手各捏半心 · 并拢停住</span></div>
-    <div class="hint" data-k="call"><b>打电话</b><span>拇指 + 小指伸出 · Miss me? Call me</span></div>
-    <div class="hint" data-k="like"><b>点赞</b><span>拇指竖起 · 四指收回 · 粒子星星 666</span></div>
+    <div class="hint" data-k="call"><b>打电话</b><span>拇指 + 小指伸出 · 放一盏孔明灯</span></div>
+    <div class="hint" data-k="like"><b>点赞</b><span>拇指竖起 · 四指收回 · 金箔纸屑</span></div>
+    <div class="hint" data-k="ok"><b>单手 OK</b><span>拇指食指成圈 · 三指伸开 · 爱心 + 流星 + 烟花</span></div>
   </div>
 
   <div class="status" id="status">
@@ -77,14 +107,69 @@
     <div class="score-num" id="scoreNum">0</div>
     <div class="score-label">礼物已接住</div>
   </div>
+
+  <!--
+    浏览器不允许「没人点过就出声」。与其偷偷在任意点击里塞一次 play()，
+    不如摆一个明确的按钮：点了才响，没点就没有声音，用户心里有数。
+  -->
+  <button id="btnPlayMusic" class="play-pill" hidden>
+    <span class="pp-ico">♪</span><span class="pp-text">点击播放音乐</span>
+  </button>
 </div>
 
 <div id="loading">
   <div class="loading-inner">
     <div class="loading-title">Merry Christmas</div>
-    <div class="loading-sub" id="loadingText">正在唤醒雪夜…</div>
-    <div class="loading-bar"><i id="loadingBar"></i></div>
-    <div class="loading-note">请允许使用摄像头，举起双手即可开始</div>
+
+    <!-- 状态文本与百分比同一行：左边说「在做什么」（中英双行），右边说「到几成」。
+         数字由 main.js 的补间驱动，逐帧爬升，不会跳。 -->
+    <div class="loading-status">
+      <span class="ls-text">
+        <span class="loading-sub" id="loadingText">正在唤醒雪夜…</span>
+        <span class="loading-sub-en" id="loadingTextEn">Waking up the snow night…</span>
+      </span>
+      <span class="loading-pct" id="loadingPct">
+        <b id="loadingPctNum">0</b><i>%</i>
+      </span>
+    </div>
+
+    <div class="loading-bar" id="loadingBarTrack"><i id="loadingBar"></i></div>
+
+    <div class="loading-note">
+      <span>请允许使用摄像头，举起双手即可开始</span>
+      <em>Allow camera access, then raise both hands</em>
+    </div>
+
+    <button id="btnSkip" class="loading-skip" hidden>
+      <span>不等了，先看看树</span>
+      <em>Skip the rest · see the tree</em>
+    </button>
+  </div>
+</div>
+
+<!--
+  「先听一首歌？」确认弹窗。
+  等模型这几秒不必干等，但浏览器不允许「没人点过就出声」——
+  所以直接把这一次点击要下来：点了才取音频，取完就响。
+  放在遮罩外面：本地秒开时遮罩一收，这张卡还能留在场景上等一个答复。
+-->
+<div id="musicPrompt" class="music-prompt" hidden>
+  <div class="mp-card" role="dialog" aria-modal="true" aria-labelledby="mpTitleCn">
+    <div class="mp-ico" aria-hidden="true">♪</div>
+    <h2 class="mp-title" id="mpTitleCn">先听一首歌？</h2>
+    <p class="mp-title-en">Enjoy some music?</p>
+    <p class="mp-desc">
+      模型和摄像头还在准备，这几秒可以先听着。
+      <em>Play a tune while the model and camera get ready.</em>
+    </p>
+    <div class="mp-actions">
+      <button id="btnMusicYes" class="mp-btn primary" type="button">
+        <span class="mb-cn">开启音乐</span><em class="mb-en">Play</em>
+      </button>
+      <button id="btnMusicNo" class="mp-btn" type="button">
+        <span class="mb-cn">先不用</span><em class="mb-en">Not now</em>
+      </button>
+    </div>
   </div>
 </div>
 

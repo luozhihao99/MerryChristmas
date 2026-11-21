@@ -4,6 +4,14 @@ import { sampleText, sampleShape } from './particleSampler.js';
 import { SoftVeil } from './SoftVeil.js';
 
 /**
+ * 已停用 · 保留作备选。
+ * 点赞现在用 `Confetti.js`（金箔纸屑）。换掉的原因是符号不对：「五角星 + 666」
+ * 属于评分角标和弹幕梗的语言，放进雪夜圣诞树里气质不合。
+ * 想切回来：把 `main.js` 的 buildExtras 里 `Confetti` 换回 `LikeBurst`，
+ * 变量名 confetti → like 一起改，构造签名一致。
+ *
+ * ---------------------------------------------------------------------------
+ *
  * 「点赞」手势（拇指竖起、其余四指收回）触发的粒子图案：
  * 一颗粒子勾出的五角星（中间一点亮芯），头顶一串「666」——
  * 666 用斜体衬线的花体，和比心收尾的「I love you」、打电话弹幕同一套字，

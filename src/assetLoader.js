@@ -82,7 +82,11 @@ async function cachePut(key, buffer) {
 /* ---------------- 下载 ---------------- */
 
 async function download(url, onProgress) {
-  const res = await fetch(url, { mode: 'cors', credentials: 'omit' });
+  // credentials 用默认的 same-origin，不要写 'omit'：
+  // index.html 里 <link rel=preload as=fetch crossorigin="anonymous"> 对应的是
+  // 「CORS + same-origin 凭据」。两边凭据模式对不上，浏览器就不会复用预取，
+  // 结果是同一个 7.6MB 模型被下载两遍（实测 +19ms 一次、+1.4s 又一次）。
+  const res = await fetch(url, { mode: 'cors' });
   if (!res.ok) throw new Error(`HTTP ${res.status} · ${url}`);
 
   // 服务端开了 gzip 时 content-length 是压缩后大小，不能当总量用
@@ -160,8 +164,16 @@ export async function prefetchHandModel({ onProgress } = {}) {
   // wasm 预热与模型下载并行
   warmWasm(primary.wasmBase);
 
-  // 先看缓存：命中就不产生任何网络请求
-  const cached = await cacheGet(MODEL_VERSION);
+  // 缓存读盘只给 60ms 的机会，拿不到就直接走网络。
+  // 早先是「先 await 读 IndexedDB，再下模型」——IDB 冷启动要几百毫秒，
+  // 主线程又被建场卡着，实测模型请求被推到 +1.3s 才开始，等于白等一整个首屏。
+  // 现在就两条路同时跑：命中缓存（热启动）就用缓存，否则网络。
+  // 另外 /assets 带 immutable 缓存头，重复访问时浏览器自己的 HTTP 缓存本来就是零请求，
+  // 所以这个竞速不会造成重复下载。
+  const cached = await Promise.race([
+    cacheGet(MODEL_VERSION),
+    new Promise((r) => setTimeout(() => r(null), 60)),
+  ]);
   if (cached) {
     onProgress?.({ phase: 'model', loaded: cached.byteLength, total: cached.byteLength, fromCache: true });
     return { ...primary, modelBuffer: cached, fromCache: true, source: 'cache' };
