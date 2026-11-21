@@ -1,7 +1,10 @@
 import * as THREE from 'three';
 import { dotTexture } from './textures.js';
 
-const GIFT_COLORS = [0xb3202f, 0xc8a02e, 0x2f6b46, 0xd8d0c0, 0x8e1f4a, 0x1f4f8e];
+// 第四色原来是 0xd8d0c0（近白）。树底那三盏点光把地面照到 0.3 亮度之后，
+// 这只盒子正好站在灯前 —— 反照率 0.85 乘上照度直接顶到 1.0，整只盒子糊成纯白方块。
+// 换成暖米色，同样的光照下还能看出盒面和缎带。
+const GIFT_COLORS = [0xb3202f, 0xc8a02e, 0x2f6b46, 0xb2a691, 0x8e1f4a, 0x1f4f8e];
 const RIBBON_COLORS = [0xf0e2c0, 0xd8b45a, 0xe8e2d4];
 
 export function makeGift() {

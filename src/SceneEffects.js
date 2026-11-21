@@ -4,7 +4,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { dotTexture, groundGlowTexture } from './textures.js';
+import { dotTexture } from './textures.js';
 
 const VignetteGrainShader = {
   uniforms: {
@@ -165,28 +165,21 @@ export class SceneEffects {
   _buildGround() {
     const geo = new THREE.CircleGeometry(48, 64);
     geo.rotateX(-Math.PI / 2);
+    // 反照率不能再压到 0x0e1822：暗到这个程度，任何灯打上去都只是「黑上加点亮」，
+    // 看上去像贴了一层雾。抬到 0x263140 给雪地一点真实的漫反射底子，
+    // 树底那三盏点光才照得出「越靠树根越亮」的衰减（而不是靠加色贴片硬画）。
+    // 仍然是夜里的雪：环境光只有 0.75，远处会被雾吃掉，只剩树脚这一圈是亮的。
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x0c141d,
-      roughness: 0.78,
-      metalness: 0.12,
+      color: 0x1c2632,
+      roughness: 0.94,
+      metalness: 0.0,
     });
     this.ground = new THREE.Mesh(geo, mat);
     this.ground.position.y = -0.02;
     this.scene.add(this.ground);
 
-    const glowGeo = new THREE.PlaneGeometry(17, 17);
-    glowGeo.rotateX(-Math.PI / 2);
-    this.groundGlow = new THREE.Mesh(
-      glowGeo,
-      new THREE.MeshBasicMaterial({
-        map: groundGlowTexture(),
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      })
-    );
-    this.groundGlow.position.y = 0.01;
-    this.scene.add(this.groundGlow);
+    // 地面上的光不再由这里负责：暖光池 + 树冠回光 + 星云底座都在 GroundBase 里，
+    // 那三样要共享同一套亮度节奏（跟着鼓点呼吸、比心时转玫瑰色），拆开写会各亮各的。
   }
 
   _buildSkyStars() {
@@ -273,8 +266,6 @@ export class SceneEffects {
     this.vignette.uniforms.uTime.value = t;
     this.vignette.uniforms.uWarmLift.value = params.warm * 0.8;
 
-    this.groundGlow.material.opacity = 0.55 + params.beat * 0.35;
-    this.groundGlow.material.color.setRGB(1, 1 - love * 0.30, 1 - love * 0.16);
     this.skyStars.material.opacity = 0.42 + params.beat * 0.16;
   }
 

@@ -200,6 +200,47 @@ html,body{
 }
 .hint[data-k="heart"].on b{ color:#ffb3c7; }
 
+/* 拉弓时的即时提示：进度 + 下一步该做什么。
+   只在弓出现时冒出来 —— 平时挂着它，等于一直提醒用户「你还没拉弓」。*/
+.bow-tip{
+  position:absolute; left:50%; bottom:56px; transform:translateX(-50%);
+  width:206px; padding:8px 11px 9px;
+  border-radius:9px;
+  background:rgba(16,22,28,.62);
+  border:1px solid rgba(232,192,122,.20);
+  backdrop-filter:blur(6px);
+  opacity:0; transition:opacity .22s ease, transform .22s ease;
+  pointer-events:none;
+}
+.bow-tip.show{ opacity:1; }
+.bow-tip[hidden]{ display:none; }
+.bow-tip-row{
+  display:flex; align-items:baseline; gap:7px;
+  font-size:11px; letter-spacing:.04em; color:rgba(226,235,244,.62);
+}
+.bow-tip-row b{
+  font-weight:500; font-variant-numeric:tabular-nums;
+  font-size:13px; color:rgba(255,214,158,.92); min-width:36px;
+}
+.bow-tip-bar{
+  margin-top:6px; height:2px; border-radius:2px;
+  background:rgba(190,214,236,.14); overflow:hidden;
+}
+.bow-tip-bar i{
+  display:block; height:100%; width:0;
+  background:linear-gradient(90deg, rgba(255,168,96,.85), rgba(255,232,186,1));
+  transition:width .08s linear;
+}
+/* 窄屏：手势提示是两列叠在左下角的，进度条停在 bottom:56px 会正好压在字上，
+   所以抬到提示列表上方（约 232px），宽度也收窄一点 */
+@media (max-width: 560px){
+  .bow-tip{ bottom:232px; width:184px; padding:7px 10px 8px; }
+  .bow-tip-row{ font-size:10.5px; }
+  .bow-tip-row b{ font-size:12px; min-width:32px; }
+}
+.bow-tip.full{ border-color:rgba(255,214,158,.55); }
+.bow-tip.full .bow-tip-row span{ color:rgba(255,236,206,.98); }
+
 .status{
   position:absolute; left:50%; bottom:22px; transform:translateX(-50%);
   display:flex; align-items:center; gap:8px;

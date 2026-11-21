@@ -348,17 +348,132 @@ export function heartTexture(size = 128) {
   return toCrispTexture(c);
 }
 
-/** 地面上的绿色光晕贴片 */
-export function groundGlowTexture(size = 256) {
+
+/**
+ * 贴地的暖光池：树底那片「漫反射的发光地台」。
+ *
+ * 为什么峰值不在正中心，而是一个环：
+ *   树站在正中间，半径 2.6 以内全被针叶挡住 —— 中心再亮也看不见。第一版按
+ *   「中心最亮、往外衰减」做，露出来的只剩 r>2.6 那段已经很暗的尾巴，
+ *   看上去就是地上糊了一片暖灰。把峰值挪到 0.42~0.54（r 2.3~3.0，正好是树根
+ *   和礼物盒那一圈），再往外才是衰减 —— 看得见的那部分才有亮度差。
+ *   中心留 0.10 只是为了保证「树根底下不是突然断掉的」。
+ */
+export function warmPoolTexture(size = 512) {
   const c = makeCanvas(size);
   const ctx = c.getContext('2d');
   const S = size;
   const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
-  g.addColorStop(0.0, 'rgba(120,220,170,0.30)');
-  g.addColorStop(0.35, 'rgba(70,170,130,0.11)');
-  g.addColorStop(0.7, 'rgba(40,110,90,0.03)');
-  g.addColorStop(1.0, 'rgba(20,60,50,0)');
+  g.addColorStop(0.00, 'rgba(255,222,184,0.09)');
+  g.addColorStop(0.36, 'rgba(255,220,178,0.16)');
+  g.addColorStop(0.57, 'rgba(255,214,168,0.30)');
+  g.addColorStop(0.70, 'rgba(252,208,160,0.30)');
+  g.addColorStop(0.82, 'rgba(232,192,150,0.13)');
+  g.addColorStop(0.93, 'rgba(170,158,136,0.035)');
+  g.addColorStop(1.00, 'rgba(80,90,88,0)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, S, S);
+  return toTexture(c);
+}
+
+/**
+ * 树冠洒在雪上的一圈绿光（环状，中心是空的）。
+ *
+ * 树是这画面里唯一的绿光源，地面如果只有一团暖光，树和地就是两张贴纸叠在一起。
+ * 在暖池外面补一圈冷绿回光 —— 中心留空（那儿被树干和针叶挡住，照理晒不到）、
+ * 三四成半径处最亮、再往外散掉 —— 两块光一暖一冷交叠，地面才和树连成一体。
+ */
+export function canopySpillTexture(size = 512) {
+  const c = makeCanvas(size);
+  const ctx = c.getContext('2d');
+  const S = size;
+  const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0.00, 'rgba(110,200,150,0)');
+  g.addColorStop(0.24, 'rgba(110,200,150,0)');
+  g.addColorStop(0.34, 'rgba(105,196,148,0.085)');
+  g.addColorStop(0.48, 'rgba(88,176,134,0.058)');
+  g.addColorStop(0.64, 'rgba(60,140,110,0.024)');
+  g.addColorStop(0.84, 'rgba(40,100,84,0.006)');
+  g.addColorStop(1.00, 'rgba(30,70,60,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+  return toTexture(c);
+}
+
+/**
+ * 礼物盒底下的接触阴影（黑色 + alpha 梯度，普通混合）。
+ *
+ * 礼物盒「飘」不是因为位置不对（y 已经是半个盒高，正好贴地），而是因为地面
+ * 太暗、盒子和地之间没有任何明暗关系。贴片的做法：中心接近全黑，到 60% 半径
+ * 迅速散掉 —— 接触阴影本来就是「越靠接缝越硬」。它必须画在加色的地台光之后，
+ * 否则光会盖住阴影，盒子又浮起来了（见 GroundBase 里的 renderOrder）。
+ */
+export function contactShadowTexture(size = 128) {
+  const c = makeCanvas(size);
+  const ctx = c.getContext('2d');
+  const S = size;
+  const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0.00, 'rgba(255,255,255,0.94)');
+  g.addColorStop(0.30, 'rgba(255,255,255,0.84)');
+  g.addColorStop(0.52, 'rgba(255,255,255,0.46)');
+  g.addColorStop(0.72, 'rgba(255,255,255,0.15)');
+  g.addColorStop(0.88, 'rgba(255,255,255,0.035)');
+  g.addColorStop(1.00, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+  return toTexture(c);
+}
+
+/**
+ * 前景失焦光斑（bokeh）。
+ *
+ * 真实镜头里焦外的高光不是「一个软点点」：边缘会因为球面像差聚出一圈亮环，
+ * 内部反而是稀的。所以这里先铺一层低不透明度的柔光打底，再叠一道模糊过的
+ * 亮环，最后偏心地补一小块不均匀 —— 光斑慢慢旋转时才看得出它是「一个物体」，
+ * 而不是一团对称的雾。
+ */
+export function bokehTexture(size = 256) {
+  const c = makeCanvas(size);
+  const ctx = c.getContext('2d');
+  const S = size;
+  const cx = S * 0.5;
+  const cy = S * 0.5;
+  const R = S * 0.5;
+
+  ctx.clearRect(0, 0, S, S);
+
+  // 亮度梯度刻意做得平：真实的焦外光团是「一片有微弱边缘感的光」，
+  // 环太亮就变成一枚甜甜圈 / 一颗灰玻璃珠，看着像悬浮的物体而不是光。
+  const body = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 0.98);
+  body.addColorStop(0.00, 'rgba(255,255,255,0.30)');
+  body.addColorStop(0.34, 'rgba(255,255,255,0.235)');
+  body.addColorStop(0.58, 'rgba(255,255,255,0.240)');
+  body.addColorStop(0.74, 'rgba(255,255,255,0.300)');
+  body.addColorStop(0.86, 'rgba(255,255,255,0.235)');
+  body.addColorStop(0.95, 'rgba(255,255,255,0.085)');
+  body.addColorStop(1.00, 'rgba(255,255,255,0)');
+  ctx.fillStyle = body;
+  ctx.fillRect(0, 0, S, S);
+
+  // 一道很淡的亮环：留一点「球面像差」的意思，但不能成为轮廓线
+  ctx.save();
+  ctx.filter = `blur(${S * 0.06}px)`;
+  ctx.strokeStyle = 'rgba(255,255,255,0.20)';
+  ctx.lineWidth = S * 0.075;
+  ctx.beginPath();
+  ctx.arc(cx, cy, R * 0.78, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+
+  // 偏心的一小块亮部：让光斑有「朝向」，缓慢自转时才不显得是纯径向对称
+  const hot = ctx.createRadialGradient(
+    cx - R * 0.22, cy - R * 0.26, 0,
+    cx - R * 0.22, cy - R * 0.26, R * 0.46
+  );
+  hot.addColorStop(0.0, 'rgba(255,255,255,0.10)');
+  hot.addColorStop(1.0, 'rgba(255,255,255,0)');
+  ctx.fillStyle = hot;
+  ctx.fillRect(0, 0, S, S);
+
   return toTexture(c);
 }

@@ -52,6 +52,7 @@ export class InteractionRouter {
     this.wind = 0;         // 0..1 风强度（驱动雪/涡流）
 
     this.trayWorld = { x: 0, y: 6.0, z: 2.7, active: false };
+    this.bowW = 0;         // 0..1 拉弓权重（拉弓时要把「双手开合缩放」让出去）
     this.active = new Set();
   }
 
@@ -92,7 +93,14 @@ export class InteractionRouter {
     // 结果比心刚亮起来树同时被抽小，视觉上完全看不出心形。这里让 love 先占位。
     const heartStrength = gstate.heart && gstate.heart.active ? gstate.heart.strength : 0;
     this.love = lerp(this.love, heartStrength, 1 - Math.exp(-dt * 6));
-    const spreadW = 1 - clamp(this.love * 2.4, 0, 1);
+
+    // ---- 拉弓同理，而且更严重 ----
+    // 拉弓的姿态本身就是「两手分开」，那个间距会被缩放判成「放大」，
+    // 于是整棵树在描弓的过程中被推大 —— 弓还没成形，画面先跳了一下。
+    // 所以拉弓期间缩放权重整体让出去。
+    const bowOn = !!(gstate.bow && gstate.bow.active);
+    this.bowW = lerp(this.bowW, bowOn ? 1 : 0, 1 - Math.exp(-dt * 7));
+    const spreadW = 1 - clamp(Math.max(this.love * 2.4, this.bowW * 1.6), 0, 1);
 
     // ---- 双手缩放 ----
     let target = 1;
@@ -230,7 +238,8 @@ export class InteractionRouter {
     a.clear();
     if (this.collapse > 0.45) a.add('fist');
     if (this.explode > 0.35) a.add('open');
-    if (hands.length >= 2 && this.love < 0.25) a.add('spread');
+    if (hands.length >= 2 && this.love < 0.25 && this.bowW < 0.4) a.add('spread');
+    if (this.bowW > 0.35) a.add('bow');
     if (this.clapFlash > 0.3) a.add('clap');
     if (Math.abs(this.spinVel) > 0.12 || this.wind > 0.18) a.add('slide');
     if (this.trayWorld.active) a.add('tray');

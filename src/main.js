@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { ParticleTree, configureQuality, TREE } from './ParticleTree.js';
 import { SceneEffects } from './SceneEffects.js';
 import { SpiralRise } from './SpiralRise.js';
+import { GroundBase } from './GroundBase.js';
+import { NearBokeh } from './NearBokeh.js';
+import { BowArrow } from './BowArrow.js';
 import { GiftRain, makeGift } from './GiftRain.js';
 import { HeartEffect } from './HeartEffect.js';
 // LoveMessage / WishLantern / Confetti / MissYou 走动态 import（见 scheduleExtras）：
@@ -63,7 +66,14 @@ const el = {
   btnMusicYes: document.getElementById('btnMusicYes'),
   btnMusicNo: document.getElementById('btnMusicNo'),
   hints: Array.from(document.querySelectorAll('.hint')),
+  bowTip: document.getElementById('bowTip'),
+  bowTipPct: document.getElementById('bowTipPct'),
+  bowTipText: document.getElementById('bowTipText'),
+  bowTipFill: document.getElementById('bowTipFill'),
 };
+
+// 显隐交给 opacity（.show），不要用 [hidden] —— display:none 会让过渡直接失效
+if (el.bowTip) el.bowTip.hidden = false;
 
 // 被 GESTURE_SWITCH 关掉的手势，连提示条一起藏掉，
 // 免得用户照着「握拳」去比划却什么也不发生。
@@ -292,6 +302,9 @@ scene.background = new THREE.Color(0x05070c);
 
 const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 120);
 camera.position.set(0, 5.3, 16.8);
+// 拉弓那组（弓 / 箭 / 红心）是挂在相机下面的屏幕图层，相机必须进场景图，
+// 否则它的子节点不会被渲染 —— 而且不会有任何报错，只是「什么也没出现」。
+scene.add(camera);
 
 const ambient = new THREE.AmbientLight(0x2b3c55, 0.75);
 scene.add(ambient);
@@ -313,6 +326,22 @@ scene.add(tree.group);
 // 颗数从 1600 收到 1100：太密就排成一条连续的线（像跑道灯），
 // 稀一点才像零散的热气。
 const spiral = new SpiralRise(scene, { count: lowPower ? 720 : 1100 });
+
+// 地面：暖光池 + 树冠回光 + 贴地星云。原来的地面只有一张绿色光贴片，
+// 礼物盒站在一片纯黑上，看起来全在飘（详见 GroundBase 文件头）。
+const groundBase = new GroundBase(scene, { count: lowPower ? 720 : 1150 });
+
+// 前景失焦光斑：几团很大的虚光在镜头前 7~12 个单位处慢慢落下。
+// 它造的是景深，不是氛围 —— 没有这一层，树、礼物、雪全在同一层上，像一张画。
+const nearBokeh = new NearBokeh(scene, { count: lowPower ? 6 : 8 });
+// 首帧就要用对焦距，不能等到第一次 resize 才设（那之前光斑尺寸是错的）
+nearBokeh.setViewport(camera, window.innerHeight, pixelRatio);
+groundBase.setViewport(camera, window.innerHeight, pixelRatio);
+
+// 双手拉弓：弓在右下、红心在左上，箭沿对角线飞过去穿心。
+// 它是相机子节点（屏幕坐标），所以不受树的缩放/旋转影响。
+const archery = new BowArrow(scene, camera);
+archery.setPixelRatio(pixelRatio);
 
 performance.mark('boot:prefx');
 const effects = new SceneEffects(renderer, scene, camera, {
@@ -353,6 +382,10 @@ for (let i = 0; i < 9; i++) {
   g.position.set(Math.cos(a) * r, g.userData.size * 0.42, Math.sin(a) * r * 0.72);
   g.rotation.y = Math.random() * Math.PI * 2;
   g.scale.setScalar(0.88 + Math.random() * 0.18);
+  // 每盒往背离树心的方向拖一块软投影。位置本来是对的（正好贴地），
+  // 但地面太暗、盒底又被地灯照亮，看不出「贴」—— 影子落在盒子外侧那片
+  // 看得见的地面上，才读得出「它挡住了光」
+  groundBase.addGiftShadow(g.position.x, g.position.z, g.userData.size);
   pile.add(g);
 }
 scene.add(pile);
@@ -364,12 +397,17 @@ const beatDetector = new BeatDetector();
 const breath = new BreathMapper();
 const router = new InteractionRouter();
 
-let gestureState = { hands: [], handCount: 0, spread: null, tray: null, heart: null };
+let gestureState = { hands: [], handCount: 0, spread: null, tray: null, heart: null, bow: null };
+// 拉弓提示当前显示的是哪一档文案（只用于避免每帧写 DOM）
+let bowTipKey = '';
 
 const gesture = new GestureController({
   video,
   onEvent: (type, payload) => {
     router.onEvent(type, payload);
+    // 拉弓松手：箭从当前弓弦位置射向红心。power 由拉弓量决定，
+    // 影响飞行时间和拖影长度 —— 拉到一半和拉满看起来必须不一样
+    if (type === 'bowRelease') archery.trigger(clock.elapsedTime, (payload && payload.power) || 1);
     // 打电话：一盏盏孔明灯从树旁升起，升完之前不重复触发（手势一直比着也只放一轮）
     // 用 elapsedTime 属性而不是 getElapsedTime()：后者会内部推进时钟，扰动这一帧的 dt
     if (type === 'call' && lantern && !lantern.busy) lantern.trigger(clock.elapsedTime);
@@ -833,6 +871,9 @@ function tick() {
 
   tree.update(t, params);
   spiral.update(dt, t, params, camera);
+  groundBase.update(dt, t, params);
+  nearBokeh.update(dt, t, params, camera);
+  archery.update(dt, t, gestureState.bow, params);
   effects.update(t, params);
   gifts.update(dt, router.trayWorld);
 
@@ -864,6 +905,42 @@ function tick() {
   for (const h of el.hints) {
     h.classList.toggle('on', router.active.has(h.dataset.k));
   }
+
+  // 拉弓提示：只在弓（或刚射出的箭）在的时候出现 —— 平时挂着它，
+  // 等于一直提醒用户「你还没拉弓」。用户最常卡住的两件事是
+  // 「拉开多少算满」和「怎么放出去」，所以这两句直接写在进度条上。
+  if (el.bowTip) {
+    const bw = gestureState.bow;
+    const bowOn = !!(bw && bw.active);
+    const justShot = archery.lastRelease > 0 && clock.elapsedTime - archery.lastRelease < 1.15;
+    const show = bowOn || justShot;
+    const pull = archery.pull;
+    let key;
+    if (!show) key = 'off';
+    else if (!bowOn) key = 'shot';
+    else if (pull >= 0.82) key = 'full';
+    else if (pull >= 0.3) key = 'mid';
+    else if (pull > 0.02) key = 'low';
+    else key = 'start';
+
+    if (key !== bowTipKey) {
+      bowTipKey = key;
+      el.bowTip.classList.toggle('show', show);
+      el.bowTip.classList.toggle('full', key === 'full' || key === 'shot');
+      el.bowTipText.textContent = {
+        off: '',
+        shot: '箭已出弦 · 再拉一次',
+        full: '已拉满 · 两手一松就放箭',
+        mid: '继续拉 · 松手立即放箭',
+        low: '两手再拉开一点',
+        start: '两手指尖分开 · 一只手半握',
+      }[key];
+    }
+    if (show) {
+      el.bowTipPct.textContent = `${Math.round(pull * 100)}%`;
+      el.bowTipFill.style.width = `${Math.round(pull * 100)}%`;
+    }
+  }
   el.handCount.textContent = String(gestureState.handCount);
 
   // 探针：每 6 帧刷一次，够看又不拖 DOM；隐藏时不写
@@ -879,7 +956,14 @@ function tick() {
       + `  抓 ${(h0 ? h0.clutch : 0).toFixed(2)}  转 ${(router.spin * 57.3).toFixed(0)}°`
       + `  速 ${router.spinVel.toFixed(2)}  电 ${(h0 ? h0.phone : 0).toFixed(2)}`
       + `  赞 ${(h0 ? h0.like : 0).toFixed(2)}`
-      + `  OK ${(h0 ? h0.ok : 0).toFixed(2)}`;
+      + `  OK ${(h0 ? h0.ok : 0).toFixed(2)}\n`
+      + (() => {
+        const bw = gestureState.bow;
+        if (!bw) return '弓 -';
+        return `弓 ${bw.pull.toFixed(2)}${bw.active ? ' ON' : ' --'}`
+          + `  距 ${bw.sep.toFixed(2)}  平 ${bw.level.toFixed(2)}  握 ${bw.grip.toFixed(2)}`
+          + `  速 ${(bw.rate || 0).toFixed(1)}`;
+      })();
     el.probe.classList.toggle('hit', !!(hh && hh.active));
   }
 
@@ -902,11 +986,15 @@ function resize() {
   effects.setSize(w, h, pixelRatio);
   tree.setPixelRatio(pixelRatio);
   spiral.setPixelRatio(pixelRatio);
+  groundBase.setPixelRatio(pixelRatio);
+  nearBokeh.setViewport(camera, h, pixelRatio);
+  groundBase.setViewport(camera, h, pixelRatio);
   heart.setPixelRatio(pixelRatio);
   if (loveMsg) loveMsg.setPixelRatio(pixelRatio);
   if (lantern) lantern.setPixelRatio(pixelRatio);
   if (confetti) confetti.setPixelRatio(pixelRatio);
   if (missYou) missYou.setPixelRatio(pixelRatio);
+  archery.setPixelRatio(pixelRatio);
 }
 window.addEventListener('resize', resize);
 
@@ -1066,7 +1154,7 @@ function nextPaint() {
 }
 
 if (DEBUG) {
-  window.__app = { gesture, router, tree, spiral, effects, audio, gifts, heart, loveMsg, lantern, confetti, missYou, breath, beatDetector, camera, bootState };
+  window.__app = { gesture, router, tree, spiral, groundBase, nearBokeh, archery, effects, audio, gifts, heart, loveMsg, lantern, confetti, missYou, breath, beatDetector, camera, bootState };
   // loveMsg / lantern / confetti / missYou 是空闲时段才建的，buildExtras 里建好后会补挂上来
   if (el.probe) el.probe.hidden = false;
 }
@@ -1109,6 +1197,14 @@ window.addEventListener('keydown', (e) => {
   const tag = (document.activeElement && document.activeElement.tagName) || '';
   if (/INPUT|TEXTAREA/.test(tag)) return;
   if (confetti) confetti.trigger(clock.elapsedTime);
+});
+
+// 按 B 看一次「拉弓 → 放箭 → 穿心 → 粒子散开」：不用比手势也能确认这段在不在
+window.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.key.toLowerCase() !== 'b') return;
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  if (/INPUT|TEXTAREA/.test(tag)) return;
+  archery.demoShot(clock.elapsedTime);
 });
 
 boot();

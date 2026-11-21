@@ -56,6 +56,50 @@ const OK_CFG = {
   cooldown: 9000,
 };
 
+/**
+ * 「双手拉弓」：两只手一前一后拉开，像把弦拉满。
+ *
+ * 为什么能和不冲突的手势分开 —— 全部靠「几何构型」而不是时序：
+ *   比心：两手并拢（指尖距离 < 1.3 手宽），拉弓要求 >= 1.5 手宽，天然互斥；
+ *   双手开合缩放：两手都摊开，拉弓要求至少一只手是「握」的（clutch 高），
+ *     拉弦那只手的食指中指是勾着的，这正好是 clutch 的形态；
+ *   拍手：两手快速合拢 —— 它发生在拉弓**之后**，所以拉弓期间要反过来压住 clap。
+ *
+ * 拉伸量 pull 不做「绝对像素」映射，而是除以手宽再归一：手离镜头远近、
+ * 用户手大手小都不影响。0.45 以下是「还没拉开」，0.85 以上算满弓。
+ */
+/**
+ * 拉弓的参数全部往「宽松」一侧调过一次。第一版是拿「标准姿势」量出来的：
+ * 两手水平、间距 4.6 个手宽、勾弦的手必须半握、放箭要快过 3.2 手宽/秒 ——
+ * 实测绝大多数人做不到其中任意一条，于是「比划了半天弓不出来」。
+ *
+ * 三条最卡人的：
+ *   1. 手必须**水平**对齐（levelZero 1.65）。可画面里的弓是斜指左上的，
+ *      人一比划自然就带斜度，于是判不出来 → 放到 2.30；
+ *   2. 拉满要 4.6 个手宽。真人两只手都在胸前，胳膊展开也就 3 个手宽左右
+ *      → 拉到 3.6 就算满弓；
+ *   3. 勾弦的手必须握成拳（clutch > 0.52）。自然放松的手 clutch ≈ 0.4~0.45，
+ *      根本够不着 → 降到 0.30（摊平的掌 ≈ 0，那一类仍然留给「双手开合缩放」）。
+ */
+const BOW_CFG = {
+  start: 1.12,        // 两手间距 / 手宽，低于它还没开始拉
+  full: 3.60,         // 拉满
+  levelFull: 0.90,    // 两手高度差 / 手宽（越小越正）
+  levelZero: 2.30,
+  // 五指收向掌心的程度（clutch）：握拳 ≈ 1.0，自然放松的手 ≈ 0.4，摊平的掌 ≈ 0。
+  // 0.30 只排除「完全摊开」——那一类属于「双手开合缩放」，不能抢。
+  gripMin: 0.30,
+  gripFull: 0.72,
+  threshold: 0.26,    // levelScore 门槛
+  hold: 150,          // 姿势稳住多久才让弓出现
+  releaseMs: 340,     // 松手滞回：追踪抖一下不让弓闪掉
+  drop: 0.15,         // pull 从峰值回落这么多 = 放箭（唯一判据，不受跟丢重捕影响）
+  peakMin: 0.24,      // 峰值至少拉到这儿才允许放箭
+  handLossPeak: 0.34, // 一只手直接消失时，至少拉到这个程度才算「放箭」
+  guard: 420,         // 放完箭后的冷却：手合拢的过程不能立刻又被判成拉弓
+  cooldown: 1100,
+};
+
 const HEART_CFG = {
   gapNear: 0.02, gapNearFull: 0.16,     // 两手指尖几乎重叠 → 更像拍手，降分
   gapFarFull: 1.30, gapFarZero: 1.90,   // 心形是两手并拢（约一拳内），拉得更开就是缩放
@@ -137,6 +181,17 @@ export class GestureController {
     this.heartLastAt = 0;
     this.heartGap = null;
     this.heartGapRate = 0;
+
+    // 双手拉弓：连续值（拉多少）+ 一句「放箭」事件
+    this.bow = { active: false, pull: 0, sep: 0, level: 0, grip: 0, x: 0.5, y: 0.5 };
+    this.bowLastAt = 0;
+    this.bowSince = 0;
+    this.bowOffSince = 0;
+    this.bowPeak = 0;
+    this.bowGuardUntil = 0;
+    this.lastBowAt = 0;
+    this.bowSepPrev = null;
+    this.bowSepRate = 0;
     // 调试探针：真机上比心不出效果时，看这几个数就知道卡在哪一步
     this.probe = { ringA: 0, ringB: 0, gap: 0, level: 0, rate: 0, score: 0, stage: '-' };
 
@@ -146,6 +201,7 @@ export class GestureController {
       spread: null,
       tray: null,
       heart: this.heart,
+      bow: this.bow,
     };
   }
 
@@ -302,6 +358,10 @@ export class GestureController {
       }
       this.slots[h.label] = { palm: { ...h.palm } };
     }
+
+    // 拉弓要先算：它要压住 clap（放箭＝两手合拢，几何上就是拍手）
+    // 和比心（拉弓时两手分开、比心时两手并拢，用 pull 就能区分）
+    this.state.bow = this._computeBow(hands, now);
 
     this._detectEvents(hands, now);
 
@@ -486,10 +546,148 @@ export class GestureController {
     return Math.hypot(a.palm.x - b.palm.x, a.palm.y - b.palm.y);
   }
 
+  /**
+   * 双手拉弓。
+   *
+   * 输出的不是「一次事件」，而是一条连续曲线 pull（0..1）—— 弦的弯曲、
+   * 箭的回撤、弓身的形变都靠它，所以必须逐帧跟手，不能只在触发时给一个数。
+   *
+   * 放箭的判据是「两手**快速**合拢」而不是「pull 变小」：
+   * 后者在把手放下去的时候也会成立，结果每次收手都白射一箭。
+   * 快速合拢是物理上不同的一件事 —— 拉弦的手一松，两只手是弹回去的。
+   */
+  _computeBow(hands, now) {
+    const b = this.bow;
+    if (!GESTURE_SWITCH.bow) {
+      b.active = false;
+      b.pull = 0;
+      b.sep = 0;
+      b.level = 0;
+      b.grip = 0;
+      this.bowPeak = 0;
+      this.bowSince = 0;
+      this.bowOffSince = 0;
+      this.bowSepRate = 0;
+      return b;
+    }
+
+    const dt = this.bowLastAt ? Math.min(0.2, Math.max(0.008, (now - this.bowLastAt) / 1000)) : 0.016;
+    this.bowLastAt = now;
+
+    let sep = 0;
+    let level = 0;
+    let grip = 0;
+    let posed = false;
+    let sepRate = 0;
+
+    if (hands.length === 2) {
+      const [a, c] = hands;
+      const sizeAvg = Math.max(0.02, (a.size + c.size) / 2);
+      sep = Math.hypot(a.palm.x - c.palm.x, a.palm.y - c.palm.y) / sizeAvg;
+      level = Math.abs(a.palm.y - c.palm.y) / sizeAvg;
+      // 勾弦那只手是半握的：clutch（五指收向掌心）或 pinch（拇指食指捏）都会高。
+      // 摊开的双手 clutch≈0 —— 那正是「双手开合缩放」，不能抢。
+      grip = Math.max(a.clutch, c.clutch, a.pinch, c.pinch);
+      const levelScore = 1 - smooth((level - BOW_CFG.levelFull) / (BOW_CFG.levelZero - BOW_CFG.levelFull));
+      const gripScore = smooth((grip - BOW_CFG.gripMin) / (BOW_CFG.gripFull - BOW_CFG.gripMin));
+      // 比心期间不判拉弓：两手并拢做心时「掌间距」照样超过 start（1.12 手宽），
+      // 而且捏半心时 pinch 很高、握姿那一关也过得去 ——
+      // 不排掉就会一边比心一边从右下角冒出一把弓。这里读的是上一帧的心状态，
+      // 差一帧无所谓：心的入场要稳 260ms，弓的入场也要稳 150ms。
+      const heartBusy = !!(this.heart && (this.heart.active || this.heart.strength > 0.30));
+      // grip 只做「排除摊平的手」，不再要求它很高：0.06 的门槛意味着
+      // 只要 clutch 过了一点点线就算 —— 真正的区分交给下面那条 sep > start
+      posed = !heartBusy && levelScore > BOW_CFG.threshold
+        && gripScore > 0.06 && sep > BOW_CFG.start;
+      b.x = (a.palmMirrored.x + c.palmMirrored.x) / 2;
+      b.y = (a.palmMirrored.y + c.palmMirrored.y) / 2;
+
+      // 只做探针用的手间距变化率（手宽/秒，负 = 在靠近）。
+      // **不要**拿它当放箭判据：手一旦被跟丢重捕，位置会跳，瞬时时序速度
+      // 能到几百 —— 那会被当成一次猛烈的「弹弦」，凭空放出一箭。
+      // 放箭只看 pull 的回落，pull 本身是低通过（10/s），跳变进不来。
+      const inst = this.bowSepPrev == null ? 0 : (sep - this.bowSepPrev) / Math.max(dt, 0.008);
+      this.bowSepRate += (Math.max(-20, Math.min(20, inst)) - this.bowSepRate) * 0.35;
+      this.bowSepPrev = sep;
+      sepRate = this.bowSepRate;
+    } else {
+      this.bowSepPrev = null;
+      this.bowSepRate = 0;
+      // 这里**不能**清 bowOffSince：清了以后下面那句 `if (!bowOffSince)` 会
+      // 每帧把它重置成 now，于是「只剩一只手」时 active 永远不会掉，
+      // 弓会一直挂在屏幕上、缩放权重也一直被它占着。
+    }
+
+    // 入场要稳 220ms（双手抬起来路过不算），退场给 280ms 滞回（追踪抖一下弓不闪）
+    if (posed && now > this.bowGuardUntil) {
+      this.bowOffSince = 0;
+      if (!this.bowSince) this.bowSince = now;
+      if (now - this.bowSince >= BOW_CFG.hold) b.active = true;
+    } else {
+      this.bowSince = 0;
+      if (b.active) {
+        if (!this.bowOffSince) this.bowOffSince = now;
+        if (now - this.bowOffSince >= BOW_CFG.releaseMs) b.active = false;
+      }
+    }
+
+    // 拉弓量：手间距按「手宽」归一后再做一次平滑映射
+    const target = b.active
+      ? smooth((sep - BOW_CFG.start) / (BOW_CFG.full - BOW_CFG.start))
+      : 0;
+    b.pull += (target - b.pull) * (1 - Math.exp(-dt * (b.active ? 10 : 5.5)));
+    if (b.pull < 0.004) b.pull = 0;
+
+    b.sep = sep;
+    b.level = level;
+    b.grip = grip;
+    b.rate = sepRate;
+
+    // ---- 放箭 ----
+    // 峰值以 1.15/s 缓慢回落：只要 pull 掉得比这个快，drop 就会累积到 0.15；
+    // 而慢慢把手放下（约 0.5~0.7/s）永远追不上它 —— 这就是「弹弦」和
+    // 「收手」的区别，不需要人真的做出多快的手速。
+    //
+    // 两条路都算放箭：
+    //   a) pull 从峰值掉了 0.15 —— 松手 / 回收，最自然的那条；
+    //   b) 一只手直接从画面里消失 —— 用户会以为没反应，替他放出去。
+    // 之所以不用「手合拢的瞬时速度」：手被跟丢重捕时坐标会跳，
+    // 一帧就能造出几百手宽/秒的假速度，于是凭空放箭（第一版踩过）。
+    // pull 是低通过的量，跳变进不来。
+    this.bowPeak = Math.max(b.pull, this.bowPeak - dt * 1.15);
+    const drop = this.bowPeak - b.pull;
+    const armed = b.active || (this.bowOffSince && now - this.bowOffSince < 240);
+    const ready = now - this.lastBowAt > BOW_CFG.cooldown;
+    const snapped = drop > BOW_CFG.drop;
+
+    if (armed && ready && this.bowPeak > BOW_CFG.peakMin && snapped) {
+      this._fireBow(this.bowPeak, now);
+    } else if (ready && hands.length < 2 && this.bowPeak > BOW_CFG.handLossPeak) {
+      // 拉满之后一只手直接出了画面（或检测丢了）：当成放箭，否则用户会以为没反应
+      this._fireBow(this.bowPeak, now);
+    }
+
+    return b;
+  }
+
+  _fireBow(pull, now) {
+    this.bowPeak = 0;
+    this.lastBowAt = now;
+    this.bowGuardUntil = now + BOW_CFG.guard;
+    this.bow.active = false;
+    this.bowSince = 0;
+    this.bowOffSince = 0;
+    // 0.45 保底：哪怕只拉到一半，箭也要飞得像样；0.85 以上算满弓
+    this.onEvent('bowRelease', { power: Math.min(1, Math.max(0.45, pull / 0.85)) });
+  }
+
   _detectEvents(hands, now) {
     // 两手都在做「圈」＝比心姿态。它和拍手/炸裂都是「两手靠近 / 手指收拢」，
     // 几何上容易撞车，所以这两个事件都先排除它。
     const bothRinged = hands.length === 2 && hands[0].ring > 0.5 && hands[1].ring > 0.5;
+    // 拉弓期间（含放箭那一刻）两手快速合拢 = 松弦，不是拍手。
+    // 不压住的话，每放一箭都会顺手炸一场暴雪，把箭的轨迹盖掉。
+    const bowLive = this.bow && (this.bow.active || this.bow.pull > 0.12);
 
     // 张手炸裂：**单手抓取 → 1.2 秒内张开手掌**。
     // 抓取的判据是「五个指尖一起收向掌心」（clutch），不是「指尖聚成一点」——
@@ -518,7 +716,7 @@ export class GestureController {
             st.grabbed = false;
           } else if (held >= BURST_CFG.hold && h.openness > BURST_CFG.open) {
             st.grabbed = false;
-            if (!bothRinged && now - this.lastBurstAt > BURST_CFG.cooldown) {
+            if (!bothRinged && !bowLive && now - this.lastBurstAt > BURST_CFG.cooldown) {
               this.lastBurstAt = now;
               this.onEvent('burst', { strength: 1.0, hand: h });
             }
@@ -619,7 +817,7 @@ export class GestureController {
         this.farDist = s;
         this.farAt = now;
       }
-      if (!bothRinged && s < 0.16 && this.farDist !== null && this.farDist > 0.26 && now - this.farAt < 700) {
+      if (!bothRinged && !bowLive && s < 0.16 && this.farDist !== null && this.farDist > 0.26 && now - this.farAt < 700) {
         if (now - this.lastClapAt > 500) {
           this.lastClapAt = now;
           this.onEvent('clap', { strength: 1.0 });
@@ -766,6 +964,7 @@ export class GestureController {
 
     const cand = hands.length === 2
       && now - this.lastClapAt > HEART_CFG.clapGuard
+      && !(this.bow && (this.bow.active || this.bow.pull > 0.12))   // 拉弓时不让心形抢戏
       && score >= HEART_CFG.threshold;
 
     let pose;
