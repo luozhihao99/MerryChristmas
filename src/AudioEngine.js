@@ -73,6 +73,28 @@ export class AudioEngine {
     };
   }
 
+  /**
+   * 可视化频谱：64 个对数分布的频点（55Hz ~ 8.2kHz），每个点取频段内最大值。
+   * 对数分布符合听感（低频细分、高频粗分），树底水波纹按这 64 点取值；
+   * 频点区间只依赖采样率，算一次缓存住。
+   */
+  _spectrumRanges() {
+    if (this._specRanges) return this._specRanges;
+    const binHz = this.ctx.sampleRate / this.analyser.fftSize;
+    const N = 64, lo = 55, hi = 8200;
+    const ranges = [];
+    for (let k = 0; k < N; k++) {
+      const f0 = lo * Math.pow(hi / lo, k / N);
+      const f1 = lo * Math.pow(hi / lo, (k + 1) / N);
+      const b0 = Math.max(1, Math.round(f0 / binHz));
+      const b1 = Math.max(b0 + 1, Math.min(this.analyser.frequencyBinCount - 1, Math.round(f1 / binHz)));
+      ranges.push([b0, b1]);
+    }
+    this._specRanges = ranges;
+    this.spectrum = new Float32Array(N);
+    return ranges;
+  }
+
   /** 触屏设备内存更紧，解码上限压得更低 */
   static decodeLimit() {
     const touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
@@ -461,6 +483,16 @@ export class AudioEngine {
     const mid = this._avg(this.freqData, this.bandBins.mid);
     const high = this._avg(this.freqData, this.bandBins.high);
 
-    return { low, body, mid, high, rms, hasAudio: true };
+    // 64 点频谱（0..1），树底圆环水波纹的可视化数据源
+    const ranges = this._spectrumRanges();
+    const spec = this.spectrum;
+    for (let k = 0; k < ranges.length; k++) {
+      const b0 = ranges[k][0], b1 = ranges[k][1];
+      let m = 0;
+      for (let b = b0; b < b1; b++) if (this.freqData[b] > m) m = this.freqData[b];
+      spec[k] = m / 255;
+    }
+
+    return { low, body, mid, high, rms, spectrum: spec, hasAudio: true };
   }
 }

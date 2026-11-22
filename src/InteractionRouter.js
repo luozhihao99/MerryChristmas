@@ -53,6 +53,15 @@ export class InteractionRouter {
 
     this.trayWorld = { x: 0, y: 6.0, z: 2.7, active: false };
     this.bowW = 0;         // 0..1 拉弓权重（拉弓时要把「双手开合缩放」让出去）
+
+    // 指针拖拽 = 虚拟扇风：鼠标按住左右划 / 手指在屏幕上划，和侧掌扇风走同一套
+    // spin 弹簧。pointerX 是归一化屏宽坐标（0..1），与手势 palmMirrored.x 同单位，
+    // 所以 vx（屏宽/秒）直接喂给同一组 SPIN 参数。
+    this.pointerDown = false;
+    this.pointerX = null;
+    this.lastPointerX = null;
+    this.pointerVX = 0;
+
     this.active = new Set();
   }
 
@@ -160,7 +169,31 @@ export class InteractionRouter {
     } else {
       this.lastPalmX = null;
       this.handVX *= Math.exp(-dt * 6);
-      this.sideIdle += dt;
+      // ---- 指针拖拽 = 虚拟扇风（没有手在摄像头前时才接管）----
+      // 摄像头的手优先：真手永远比拖拽可靠，两者同时存在时不打架。
+      if (this.pointerDown && this.pointerX !== null) {
+        if (this.lastPointerX === null) this.lastPointerX = this.pointerX;
+        const raw = (this.pointerX - this.lastPointerX) / Math.max(dt, 0.008);
+        this.lastPointerX = this.pointerX;
+        // 与真手同一套防抖：跳变丢弃、低通、软死区
+        if (Math.abs(raw) < SPIN.jump) {
+          this.pointerVX += (raw - this.pointerVX) * SPIN.smooth;
+        }
+        const over = Math.abs(this.pointerVX) - SPIN.dead;
+        vx = over > 0 ? Math.sign(this.pointerVX) * over : 0;
+        sideW = 1;  // 拖拽不存在「掌面有没有侧立」的问题，权重直接给满
+        if (vx !== 0) {
+          const target = clamp(vx * SPIN.rate, -SPIN.maxRate, SPIN.maxRate);
+          this.spinVel += (target - this.spinVel) * (1 - Math.exp(-dt * SPIN.accel));
+          this.sideIdle = 0;
+        } else {
+          this.sideIdle += dt;
+        }
+      } else {
+        this.lastPointerX = null;
+        this.pointerVX *= Math.exp(-dt * 6);
+        this.sideIdle += dt;
+      }
     }
 
     // 手松开：惯性继续转，靠摩擦慢慢停，不打回原位

@@ -534,7 +534,7 @@ export class ParticleTree {
     this.starMat = bodyMat;
     this.star = new THREE.Sprite(bodyMat);
     this.star.position.set(0, TREE.H + 0.52, 0);
-    this.star.scale.setScalar(2.05);
+    this.star.scale.setScalar(1.52);
     this.star.renderOrder = 3;
     this.solid.add(this.star);
 
@@ -549,7 +549,7 @@ export class ParticleTree {
     this.starGlowMat = glowMat;
     this.starGlow = new THREE.Sprite(glowMat);
     this.starGlow.position.copy(this.star.position);
-    this.starGlow.scale.setScalar(2.75);
+    this.starGlow.scale.setScalar(2.05);
     this.starGlow.renderOrder = 2;
     this.solid.add(this.starGlow);
 
@@ -582,10 +582,10 @@ export class ParticleTree {
     this.starMat.rotation = Math.sin(t * 0.28) * 0.05;
     this.starGlowMat.rotation = -Math.sin(t * 0.21) * 0.035;
     const twinkle = 0.965 + 0.035 * Math.sin(t * 1.15) + 0.015 * Math.sin(t * 2.7 + 1.1);
-    const starScale = 2.05 * (1 + params.beat * 0.10) * (1 + params.explode * 0.16);
+    const starScale = 1.52 * (1 + params.beat * 0.10) * (1 + params.explode * 0.16);
     this.star.scale.setScalar(starScale);
     this.starMat.opacity = Math.min(1, 0.92 * twinkle + params.beat * 0.08);
-    this.starGlow.scale.setScalar(2.75 * (1 + params.beat * 0.20) * (1 + params.explode * 0.22));
+    this.starGlow.scale.setScalar(2.05 * (1 + params.beat * 0.20) * (1 + params.explode * 0.22));
     this.starGlowMat.opacity = Math.min(1, 0.42 * twinkle + params.beat * 0.26);
     this.starLight.intensity = 14 + params.beat * 26;
 

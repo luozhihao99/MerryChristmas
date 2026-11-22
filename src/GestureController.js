@@ -367,7 +367,9 @@ export class GestureController {
 
     this.state.hands = hands;
     this.state.handCount = hands.length;
-    this.state.spread = this._computeSpread(hands);
+    // spread 被开关屏蔽时永远输出 null —— router 里那套缩放弹簧整段哑火，
+    // 树不再跟着两手间距一缩一放（GESTURE_SWITCH.spread）
+    this.state.spread = GESTURE_SWITCH.spread ? this._computeSpread(hands) : null;
     this.state.tray = this._computeTray(hands, now);
     this.state.heart = this._computeHeart(hands, now);
     return this.state;

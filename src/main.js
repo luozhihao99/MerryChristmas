@@ -3,7 +3,9 @@ import { ParticleTree, configureQuality, TREE } from './ParticleTree.js';
 import { SceneEffects } from './SceneEffects.js';
 import { SpiralRise } from './SpiralRise.js';
 import { GroundBase } from './GroundBase.js';
+import { SpectrumRipple } from './SpectrumRipple.js';
 import { BowArrow } from './BowArrow.js';
+import { ClickBurst } from './ClickBurst.js';
 import { GiftRain, makeGift } from './GiftRain.js';
 import { HeartEffect } from './HeartEffect.js';
 // LoveMessage / WishLantern / Confetti / MissYou 走动态 import（见 scheduleExtras）：
@@ -337,10 +339,23 @@ const groundBase = new GroundBase(scene, { count: lowPower ? 720 : 1150 });
 // 在 resize() 里补 setViewport、在 update 里补 update。
 groundBase.setViewport(camera, window.innerHeight, pixelRatio);
 
+// 树底频谱水波纹（src/SpectrumRipple.js）：用户反馈后暂时整体关闭。
+// 想恢复把它改回 true 即可，特效代码和 W 键演示模式都还在。
+const RIPPLE_ENABLED = false;
+
+// prettier-ignore
+const ripple = RIPPLE_ENABLED ? new SpectrumRipple(scene) : null;
+if (ripple) ripple.setViewport(camera, window.innerHeight, pixelRatio);
+
 // 双手拉弓：弓在右下、红心在左上，箭沿对角线飞过去穿心。
 // 它是相机子节点（屏幕坐标），所以不受树的缩放/旋转影响。
 const archery = new BowArrow(scene, camera);
 archery.setPixelRatio(pixelRatio);
+
+// 点击烟花：点一下屏幕，在点击位置炸一蓬暖金色粒子（OK 那段烟花的单独版）。
+// 位置由点击处换算到树前方 z=3.2 的平面，见「指针」一节。
+const clickBurst = new ClickBurst(scene);
+clickBurst.setPixelRatio(pixelRatio);
 
 performance.mark('boot:prefx');
 const effects = new SceneEffects(renderer, scene, camera, {
@@ -625,22 +640,28 @@ function tickTips(active, now) {
 
 /* ---------------- 音乐说明气泡 ---------------- */
 
+// #musicHelp 的整块 HTML 目前在 index.html 里被注释掉了（「?」按钮也随之隐藏），
+// getElementById 会拿到 null —— 整段逻辑必须先判空，否则每次页面点击都会
+// 在下面的 document 处理器里抛 TypeError（读 null.hidden）。
+// 把气泡加回 HTML 后，这段代码无需改动即自动恢复工作。
 const btnHelp = document.getElementById('btnHelp');
 const musicHelp = document.getElementById('musicHelp');
 
-btnHelp.addEventListener('click', (e) => {
-  e.stopPropagation();
-  const open = musicHelp.hidden;
-  musicHelp.hidden = !open;
-  btnHelp.setAttribute('aria-expanded', String(open));
-});
+if (btnHelp && musicHelp) {
+  btnHelp.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = musicHelp.hidden;
+    musicHelp.hidden = !open;
+    btnHelp.setAttribute('aria-expanded', String(open));
+  });
 
-document.addEventListener('click', (e) => {
-  if (musicHelp.hidden) return;
-  if (musicHelp.contains(e.target) || btnHelp.contains(e.target)) return;
-  musicHelp.hidden = true;
-  btnHelp.setAttribute('aria-expanded', 'false');
-});
+  document.addEventListener('click', (e) => {
+    if (musicHelp.hidden) return;
+    if (musicHelp.contains(e.target) || btnHelp.contains(e.target)) return;
+    musicHelp.hidden = true;
+    btnHelp.setAttribute('aria-expanded', 'false');
+  });
+}
 
 // 微信内置浏览器不允许选择文件，提前说明，别让用户以为是页面坏了
 if (/MicroMessenger/i.test(navigator.userAgent) && !audio.playing) {
@@ -972,7 +993,7 @@ function resumeContext() {
 document.addEventListener('pointerdown', resumeContext, true);
 window.addEventListener('keydown', resumeContext, true);
 
-/* ---------------- 指针视差 ---------------- */
+/* ---------------- 指针：视差 / 拖拽扇风 / 点击烟花 ---------------- */
 
 const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
 window.addEventListener('pointermove', (e) => {
@@ -980,11 +1001,96 @@ window.addEventListener('pointermove', (e) => {
   pointer.ty = (e.clientY / window.innerHeight - 0.5) * 2;
 });
 
+// 按住拖拽 → 虚拟扇风（router 里和侧掌扇风同一套 spin 弹簧）；
+// 快速点按 → 在点击位置炸一朵烟花。同一条 pointer 流，抬起时用
+// 「位移 < 12px 且没按多久」区分两种意图 —— 拖拽结束不炸，点击不转树。
+const TAP_DIST = 12;
+let drag = null;
+
+/** 点按钮 / 说明气泡时不算滑动也不炸烟花，别让调音量也满天烟花 */
+function isHudControl(e) {
+  return !!(e.target && e.target.closest && e.target.closest('button, .music-help, .cam-wrap, .probe'));
+}
+
+/** 屏幕坐标 → 树前方 z=3.2 平面上的世界坐标（烟花炸在树前面，不被树身吃亮度） */
+function screenToWorld(x, y) {
+  const ndc = new THREE.Vector3(
+    (x / window.innerWidth) * 2 - 1,
+    -(y / window.innerHeight) * 2 + 1,
+    0.5,
+  );
+  ndc.unproject(camera);
+  const dir = ndc.sub(camera.position).normalize();
+  const Z = 3.2;
+  if (Math.abs(dir.z) < 1e-4) return null;
+  const k = (Z - camera.position.z) / dir.z;
+  if (k <= 0) return null;
+  return camera.position.clone().addScaledVector(dir, k);
+}
+
+window.addEventListener('pointerdown', (e) => {
+  if (isHudControl(e)) { drag = null; return; }
+  drag = { x0: e.clientX, y0: e.clientY, t0: performance.now(), moved: false };
+  router.pointerDown = true;
+  router.pointerX = e.clientX / window.innerWidth;
+});
+
+window.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > TAP_DIST) drag.moved = true;
+  if (drag.moved) router.pointerX = e.clientX / window.innerWidth;
+});
+
+window.addEventListener('pointerup', (e) => {
+  router.pointerDown = false;
+  if (drag && !drag.moved && performance.now() - drag.t0 < 450) {
+    const p = screenToWorld(e.clientX, e.clientY);
+    if (p) clickBurst.trigger(p, clock.elapsedTime, window.innerWidth < 560 ? 0.85 : 1);
+  }
+  drag = null;
+});
+window.addEventListener('pointercancel', () => {
+  router.pointerDown = false;
+  drag = null;
+});
+
 /* ---------------- 主循环 ---------------- */
 
 const clock = new THREE.Clock();
 let beatFlashUntil = 0;
 let probeFrame = 0;
+
+// 水波纹演示模式（W 键切换）：不依赖音乐，直接喂假频谱 + 96 BPM 假鼓点，
+// 用来区分「特效没写好」还是「音乐数据没到」——演示模式下水波正常 = 特效没问题，
+// 问题出在音频链路（跨域读不到频谱 / AudioContext 没跑起来等）。
+let rippleDemo = false;
+const RIPPLE_DEMO_BEAT_MS = 60000 / 96;
+
+function rippleDemoFrame(t, dt) {
+  const spec = new Float32Array(64);
+  for (let k = 0; k < 64; k++) {
+    spec[k] = Math.max(0, Math.min(1,
+      0.70 * Math.exp(-k * 0.05) * (0.55 + 0.45 * Math.abs(Math.sin(t * 2.1)))
+      + 0.30 * Math.abs(Math.sin(t * 1.3 + k * 0.31))));
+  }
+  const ms = performance.now() % RIPPLE_DEMO_BEAT_MS;
+  const beat = {
+    pulse: Math.exp(-(ms / RIPPLE_DEMO_BEAT_MS) * 6.5),
+    hit: ms < 40,
+    bpm: 96,
+  };
+  ripple.update(t, spec, beat, dt);
+}
+
+function rippleDiagnosis() {
+  return [
+    'mode=' + audio.mode,
+    'playing=' + audio.playing,
+    'analysable=' + audio.analysable,
+    'ctx=' + (audio.ctx ? audio.ctx.state : 'none'),
+    'levels=' + (audio.getFrame() ? 'yes' : 'no'),
+  ].join(' ');
+}
 
 function tick() {
   if (DEBUG) bootState.tickCount = (bootState.tickCount || 0) + 1;
@@ -1026,6 +1132,14 @@ function tick() {
   tree.update(t, params);
   spiral.update(dt, t, params, camera);
   groundBase.update(dt, t, params);
+  if (ripple) {
+    if (rippleDemo) {
+      rippleDemoFrame(t, dt);
+    } else {
+      ripple.update(t, levels && levels.spectrum, beat, dt);
+    }
+  }
+  clickBurst.update(t);
   archery.update(dt, t, gestureState.bow, params);
   effects.update(t, params);
   gifts.update(dt, router.trayWorld);
@@ -1144,12 +1258,14 @@ function resize() {
   spiral.setPixelRatio(pixelRatio);
   groundBase.setPixelRatio(pixelRatio);
   groundBase.setViewport(camera, h, pixelRatio);
+  if (ripple) ripple.setViewport(camera, h, pixelRatio);
   heart.setPixelRatio(pixelRatio);
   if (loveMsg) loveMsg.setPixelRatio(pixelRatio);
   if (lantern) lantern.setPixelRatio(pixelRatio);
   if (confetti) confetti.setPixelRatio(pixelRatio);
   if (missYou) missYou.setPixelRatio(pixelRatio);
   archery.setPixelRatio(pixelRatio);
+  clickBurst.setPixelRatio(pixelRatio);
 }
 window.addEventListener('resize', resize);
 
@@ -1309,7 +1425,7 @@ function nextPaint() {
 }
 
 if (DEBUG) {
-  window.__app = { gesture, router, tree, spiral, groundBase, archery, effects, audio, gifts, heart, loveMsg, lantern, confetti, missYou, breath, beatDetector, camera, bootState,
+  window.__app = { gesture, router, tree, spiral, groundBase, ripple, archery, clickBurst, effects, audio, gifts, heart, loveMsg, lantern, confetti, missYou, breath, beatDetector, camera, bootState,
     tips: {
       list: TIPS,
       get idx() { return tipIdx; },
@@ -1376,6 +1492,18 @@ window.addEventListener('keydown', (e) => {
   const tag = (document.activeElement && document.activeElement.tagName) || '';
   if (/INPUT|TEXTAREA/.test(tag)) return;
   handleGestureEvent('clap', { strength: 1 });
+});
+
+// 按 W 切换「树底水波纹演示」（仅当 RIPPLE_ENABLED 时有意义；关着就提示一下）
+window.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.key.toLowerCase() !== 'w') return;
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  if (/INPUT|TEXTAREA/.test(tag)) return;
+  if (!ripple) { setStatus('水波纹特效已关闭（main.js 的 RIPPLE_ENABLED）'); return; }
+  rippleDemo = !rippleDemo;
+  const diag = rippleDiagnosis();
+  console.log('[水波纹] 演示模式', rippleDemo ? '开' : '关', '·', diag);
+  setStatus(rippleDemo ? '水波纹演示 · ' + diag : '水波纹演示关 · ' + diag);
 });
 
 boot();

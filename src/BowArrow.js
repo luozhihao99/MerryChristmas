@@ -59,7 +59,8 @@ void main(){
   float d = length(q);
   if (d > 0.5) discard;
   // 软芯：pow 让中心更实、边缘更快化开，加法混合下不会糊成一片灰
-  float a = smoothstep(0.5, 0.0, d);
+  // （edge0 > edge1 的倒写 smoothstep 是 GLSL 未定义行为，必须换成 1 - 正写）
+  float a = 1.0 - smoothstep(0.0, 0.5, d);
   a = pow(a, 1.6);
   gl_FragColor = vec4(vC * a * vA, 1.0);
 }
