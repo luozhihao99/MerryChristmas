@@ -88,6 +88,19 @@ html,body{
   width:26px; padding:7px 0; border-radius:50%;
   font-size:11px; color:var(--faint); line-height:1;
 }
+/* 图标按钮（清屏 ⛶）：和 help 同尺寸，别在窄屏把音乐条撑爆 */
+.btn.icon{
+  width:26px; padding:7px 0;
+  font-size:13px; line-height:1; color:var(--faint);
+}
+.btn.icon:hover{ color:var(--ink); }
+/* 「玩法 / 摄像头」这类开关按钮：平时更淡，按下去才点亮（和 help 的展开态同款） */
+.btn.ghost{ color:var(--faint); }
+.btn.ghost:hover{ color:var(--ink); }
+.btn.ghost[aria-pressed="true"]{
+  color:var(--gold); border-color:rgba(232,192,122,.4);
+  background:rgba(232,192,122,.14);
+}
 .btn.help[aria-expanded="true"]{
   color:var(--gold); border-color:rgba(232,192,122,.4);
   background:rgba(232,192,122,.14);
@@ -142,6 +155,7 @@ html,body{
   background:rgba(8,12,18,.7);
   pointer-events:none;
 }
+.cam-wrap[hidden]{ display:none; }
 #cam{
   width:100%; height:100%; object-fit:cover;
   transform:scaleX(-1);
@@ -177,6 +191,8 @@ html,body{
   position:absolute; left:26px; bottom:54px;
   display:flex; flex-direction:column; gap:7px;
 }
+/* display:flex 会盖掉浏览器对 [hidden] 的默认隐藏，这里显式还原 */
+.hints[hidden]{ display:none; }
 .hint{
   display:flex; align-items:baseline; gap:9px;
   font-size:11.5px; color:var(--faint);
@@ -250,7 +266,10 @@ html,body{
 #statusText{
   min-width:0; overflow:hidden;
   white-space:nowrap; text-overflow:ellipsis;
+  transition:color .45s ease;
 }
+/* 玩法提示刚被用户触发的一瞬，整行亮成金色，2 秒后换下一条 */
+.status.hit #statusText{ color:var(--gold); text-shadow:0 0 18px rgba(232,192,122,.4); }
 .status .dot{
   width:5px; height:5px; border-radius:50%;
   background:var(--green);
@@ -289,6 +308,69 @@ html,body{
 @media (prefers-reduced-motion: reduce){
   .play-pill{ animation:none; }
   .btn.nudge{ animation:none; }
+}
+
+/* ---------------- 清屏：录屏演示时只留画面 ---------------- */
+/* 标题、控制栏、摄像头、探针、玩法一览、底部提示、接礼物计数、拉弓进度一起淡出。
+   恢复只能靠右下角那个小「菜单」和 Esc —— 因为清屏后控制栏本身点不到了。 */
+.hud-top,
+.cam-wrap,
+.hints,
+.status,
+.score,
+.bow-tip,
+.play-pill{ transition:opacity .4s ease; }
+
+#hud.clean .hud-top,
+#hud.clean .cam-wrap,
+#hud.clean .probe,
+#hud.clean .hints,
+#hud.clean .status,
+#hud.clean .score,
+#hud.clean .bow-tip,
+#hud.clean .play-pill{
+  opacity:0 !important;
+  pointer-events:none !important;
+}
+
+/* 清屏后的唯一入口：极淡地待在右下角，鼠标碰上去才亮。
+   录屏时它几乎看不见，但不至于让用户「回不来」。只放图标，不放文字。 */
+.unclean{
+  position:absolute; right:26px; bottom:20px;
+  width:34px; height:34px; padding:0;
+  display:flex; align-items:center; justify-content:center;
+  border-radius:50%;
+  font:inherit; font-size:15px; line-height:1; letter-spacing:0;
+  color:rgba(226,235,244,.5);
+  background:rgba(8,12,18,.42);
+  border:1px solid rgba(190,214,236,.14);
+  cursor:pointer; pointer-events:auto;
+  opacity:.22; backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+  transition:opacity .3s ease, color .25s ease, border-color .25s ease, background .25s ease;
+}
+.unclean:hover{
+  opacity:1; color:var(--gold);
+  border-color:rgba(232,192,122,.45); background:rgba(16,22,28,.7);
+}
+.unclean[hidden]{ display:none; }
+
+/* 清屏瞬间的顶部轻提示：淡入 → 停 2 秒 → 淡出（计时在 setClean 里） */
+.clean-toast{
+  position:absolute; left:50%; top:30px;
+  transform:translate(-50%, -8px);
+  padding:9px 18px; border-radius:999px;
+  font-size:12px; letter-spacing:.08em; white-space:nowrap;
+  color:rgba(238,244,250,.92);
+  background:rgba(10,16,24,.74);
+  border:1px solid rgba(190,214,236,.16);
+  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  opacity:0; pointer-events:none;
+  transition:opacity .35s ease, transform .35s ease;
+}
+.clean-toast.show{ opacity:1; transform:translate(-50%, 0); }
+.clean-toast[hidden]{ display:none; }
+@media (max-width:480px){
+  .clean-toast{ font-size:11px; padding:8px 14px; top:22px; }
 }
 /* 手机上没有空间：竖直方向被手势提示条占满，横向又只有 414px。
    那里改用顶栏「播放」按钮上的金色描边来提示（见 .btn.nudge）。 */
@@ -590,8 +672,21 @@ html,body{
   100% { box-shadow:0 0 0 0 rgba(232,192,122,0); }
 }
 .btn.help{ width:22px; padding:6px 0; }
+  .btn.icon{ width:22px; padding:6px 0; font-size:12px; }
+  .unclean{ right:16px; bottom:14px; width:30px; height:30px; font-size:13px; }
   /* 窄屏放不下曲名，改为在底部状态条里显示 */
   .track{ display:none; }
   .music-help{ width:min(300px, 86vw); padding:12px 13px 10px; }
   .music-help p{ font-size:10.5px; line-height:1.58; }
+}
+
+/* 加了玩法/摄像头/清屏后，小手机上一行放不下 —— 整体再收紧一档 */
+@media (max-width:480px){
+  .hud-top{ gap:8px; }
+  .brand-en{ font-size:12px; letter-spacing:.1em; }
+  .audio-bar{ gap:5px; padding:4px 6px; }
+  .btn{ padding:5px 7px; font-size:10.5px; letter-spacing:.02em; }
+  .btn.icon, .btn.help{ width:20px; padding:5px 0; }
+  .beat{ display:none; }  /* 鼓点灯窄屏让位，音乐状态看文字就够 */
+  .unclean{ right:14px; bottom:12px; }
 }

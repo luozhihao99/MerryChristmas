@@ -3,7 +3,6 @@ import { ParticleTree, configureQuality, TREE } from './ParticleTree.js';
 import { SceneEffects } from './SceneEffects.js';
 import { SpiralRise } from './SpiralRise.js';
 import { GroundBase } from './GroundBase.js';
-import { NearBokeh } from './NearBokeh.js';
 import { BowArrow } from './BowArrow.js';
 import { GiftRain, makeGift } from './GiftRain.js';
 import { HeartEffect } from './HeartEffect.js';
@@ -66,6 +65,8 @@ const el = {
   btnMusicYes: document.getElementById('btnMusicYes'),
   btnMusicNo: document.getElementById('btnMusicNo'),
   hints: Array.from(document.querySelectorAll('.hint')),
+  hintsPanel: document.getElementById('hints'),
+  camWrap: document.getElementById('camWrap'),
   bowTip: document.getElementById('bowTip'),
   bowTipPct: document.getElementById('bowTipPct'),
   bowTipText: document.getElementById('bowTipText'),
@@ -331,11 +332,9 @@ const spiral = new SpiralRise(scene, { count: lowPower ? 720 : 1100 });
 // 礼物盒站在一片纯黑上，看起来全在飘（详见 GroundBase 文件头）。
 const groundBase = new GroundBase(scene, { count: lowPower ? 720 : 1150 });
 
-// 前景失焦光斑：几团很大的虚光在镜头前 7~12 个单位处慢慢落下。
-// 它造的是景深，不是氛围 —— 没有这一层，树、礼物、雪全在同一层上，像一张画。
-const nearBokeh = new NearBokeh(scene, { count: lowPower ? 6 : 8 });
-// 首帧就要用对焦距，不能等到第一次 resize 才设（那之前光斑尺寸是错的）
-nearBokeh.setViewport(camera, window.innerHeight, pixelRatio);
+// 前景失焦光斑（src/NearBokeh.js）已停用：那几团半透明虚光压在树上，
+// 读起来更像挡在镜头前的泡泡，而不是景深。想复现就把模块加回来，
+// 在 resize() 里补 setViewport、在 update 里补 update。
 groundBase.setViewport(camera, window.innerHeight, pixelRatio);
 
 // 双手拉弓：弓在右下、红心在左上，箭沿对角线飞过去穿心。
@@ -403,19 +402,9 @@ let bowTipKey = '';
 
 const gesture = new GestureController({
   video,
-  onEvent: (type, payload) => {
-    router.onEvent(type, payload);
-    // 拉弓松手：箭从当前弓弦位置射向红心。power 由拉弓量决定，
-    // 影响飞行时间和拖影长度 —— 拉到一半和拉满看起来必须不一样
-    if (type === 'bowRelease') archery.trigger(clock.elapsedTime, (payload && payload.power) || 1);
-    // 打电话：一盏盏孔明灯从树旁升起，升完之前不重复触发（手势一直比着也只放一轮）
-    // 用 elapsedTime 属性而不是 getElapsedTime()：后者会内部推进时钟，扰动这一帧的 dt
-    if (type === 'call' && lantern && !lantern.busy) lantern.trigger(clock.elapsedTime);
-    // 点赞：一蓬金箔从树腰迸开，翻转着飘落。落完之前不叠下一轮
-    if (type === 'like' && confetti && !confetti.busy) confetti.trigger(clock.elapsedTime);
-    // 单手 OK：爱心 → 流星雨 → 烟花 → 飘散 → miss you → 飘散，整段 8.5 秒不叠播
-    if (type === 'ok' && missYou && !missYou.busy) missYou.trigger(clock.elapsedTime);
-  },
+  // 手势事件总入口：真手势和下面的调试快捷键都从这里进 ——
+  // 以后某个手势在 main.js 里补了额外特效，键盘触发也不会漏掉那一部分
+  onEvent: handleGestureEvent,
   onStatus: (cn, en) => {
     // 遮罩上的文案由 paintLoading 独占（它管中英两行），这里只更新右上角状态条。
     // 但遮罩还没收的时候，这几句就是「现在卡在哪一环」，得同时交给 paintLoading。
@@ -427,9 +416,32 @@ const gesture = new GestureController({
   },
 });
 
+/**
+ * 手势离散事件的总入口（GestureController 回调 / 调试快捷键共用）。
+ *
+ * router 负责连续参数（explode / storm / 各种 flash），这里负责「一次性的
+ * 段落式特效」：放箭、孔明灯、纸屑、miss you。分开是因为前者每帧都在衰减，
+ * 后者是「播一轮、播完为止」的互斥状态机。
+ */
+function handleGestureEvent(type, payload) {
+  router.onEvent(type, payload);
+  // 拉弓松手：箭从当前弓弦位置射向红心。power 由拉弓量决定，
+  // 影响飞行时间和拖影长度 —— 拉到一半和拉满看起来必须不一样
+  if (type === 'bowRelease') archery.trigger(clock.elapsedTime, (payload && payload.power) || 1);
+  // 打电话：一盏盏孔明灯从树旁升起，升完之前不重复触发（手势一直比着也只放一轮）
+  // 用 elapsedTime 属性而不是 getElapsedTime()：后者会内部推进时钟，扰动这一帧的 dt
+  if (type === 'call' && lantern && !lantern.busy) lantern.trigger(clock.elapsedTime);
+  // 点赞：一蓬金箔从树腰迸开，翻转着飘落。落完之前不叠下一轮
+  if (type === 'like' && confetti && !confetti.busy) confetti.trigger(clock.elapsedTime);
+  // 单手 OK：爱心 → 流星雨 → 烟花 → 飘散 → miss you → 飘散，整段 8.5 秒不叠播
+  if (type === 'ok' && missYou && !missYou.busy) missYou.trigger(clock.elapsedTime);
+}
+
 /* ---------------- UI ---------------- */
 
 function setStatus(text, warn = false) {
+  // 系统消息（曲名 / 错误 / 状态）会顶掉玩法提示；7 秒后由 tickTips 悄悄恢复
+  if (tipIdx >= 0 && text !== TIPS[tipIdx].text) tipHoldUntil = performance.now() + 7000;
   el.statusText.textContent = text;
   el.status.classList.toggle('warn', warn);
 }
@@ -467,6 +479,148 @@ if (el.btnSkip) {
     bootState.skipped = true;
     skipResolve();
   });
+}
+
+/* ---------------- 界面开关：玩法一览 / 摄像头小窗 ---------------- */
+
+// 两块都默认收起，画面干净；按钮点亮 = 当前展开。
+// 摄像头这里只藏「画面」：video 一直在播，手势识别不受影响。
+function bindPanelToggle(btn, panel) {
+  if (!btn || !panel) return;
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const show = panel.hidden;
+    panel.hidden = !show;
+    btn.setAttribute('aria-pressed', String(show));
+  });
+}
+bindPanelToggle(document.getElementById('btnHints'), el.hintsPanel);
+bindPanelToggle(document.getElementById('btnCam'), el.camWrap);
+
+/* ---------------- 清屏：录屏演示时只留画面 ---------------- */
+
+// 清屏后右上角那排控制栏整块藏起来，所以「取消清屏」不能还放在那里。
+// 入口有两个：右下角一个极淡的小「菜单」（hover 才亮），以及 Esc —— 键盘是最后的兜底。
+const hudEl = document.getElementById('hud');
+const btnClean = document.getElementById('btnClean');
+const btnUnclean = document.getElementById('btnUnclean');
+const cleanToast = document.getElementById('cleanToast');
+let cleanToastTimer = 0;
+
+function setClean(on) {
+  hudEl.classList.toggle('clean', on);
+  if (btnClean) btnClean.setAttribute('aria-pressed', String(on));
+  if (btnUnclean) btnUnclean.hidden = !on;
+
+  // 清屏的一瞬间，右上角整条控制栏连同「怎么退出」一起消失了 ——
+  // 所以先在顶部居中弹一句 2 秒的轻提示，把「右下角图标」指出来。
+  if (!cleanToast) return;
+  clearTimeout(cleanToastTimer);
+  if (on) {
+    cleanToast.hidden = false;
+    requestAnimationFrame(() => cleanToast.classList.add('show'));
+    cleanToastTimer = setTimeout(() => {
+      cleanToast.classList.remove('show');
+      cleanToastTimer = setTimeout(() => { cleanToast.hidden = true; }, 420);
+    }, 2000);
+  } else {
+    cleanToast.classList.remove('show');
+    cleanToast.hidden = true;
+  }
+}
+
+if (btnClean) btnClean.addEventListener('click', (e) => { e.stopPropagation(); setClean(true); });
+if (btnUnclean) btnUnclean.addEventListener('click', () => setClean(false));
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && hudEl.classList.contains('clean')) setClean(false);
+});
+
+/* ---------------- 底部玩法提示 ---------------- */
+
+// 状态条平时轮换「一个」玩法：随机挑一条还没触发过的；全都玩过之后就纯随机。
+// 玩法被比出来的一瞬间整行亮金（.status.hit），2 秒后换下一条。
+// 已触发列表存 localStorage（键 tree.tips.done），刷新不重置；想清零删掉这个键即可。
+// 文案写得比左下角一览更完整 —— 一览默认是收起的，底部这句话常常是唯一的教学。
+const TIPS = [
+  { k: 'bow',    text: '试试 · 双手拉弓：两手一前一后拉开，松手放箭' },
+  { k: 'spread', text: '试试 · 双手张开合拢：缩放整棵树' },
+  { k: 'slide',  text: '试试 · 侧掌扇风：掌心朝侧左右挥，树会转起来' },
+  { k: 'heart',  text: '试试 · 双手比心：两手指尖并拢，停住别动' },
+  { k: 'call',   text: '试试 · 打电话：拇指 + 小指伸出，放一盏孔明灯' },
+  { k: 'like',   text: '试试 · 点赞：竖起大拇指，撒一蓬金箔' },
+  { k: 'ok',     text: '试试 · 单手 OK：拇指食指成圈，流星雨 + 烟花' },
+];
+// 提示条 data-k 与 router.active 的键同名，只有「张开」例外（data-k="open"，归 burst 管）
+const TIP_MAP = { open: 'burst' };
+const TIP_STORE = 'tree.tips.done';
+const TIP_FLASH_MS = 2000;
+
+let tipsDone = new Set();
+let tipsPersist = false;
+try {
+  tipsDone = new Set(JSON.parse(localStorage.getItem(TIP_STORE) || '[]'));
+  tipsPersist = true;
+} catch (e) { /* localStorage 不可用（隐私模式 / file://）：只在本会话里记 */ }
+function saveTips() {
+  if (!tipsPersist) return;
+  try { localStorage.setItem(TIP_STORE, JSON.stringify([...tipsDone])); } catch (e) { /* 忽略 */ }
+}
+
+const tipPool = () => TIPS.filter((t) => GESTURE_SWITCH[t.k] !== false);
+
+let tipIdx = -1;          // 当前提示的下标（-1 = 轮换还没开始，多为音乐模式）
+let tipHoldUntil = 0;     // 系统消息（曲名 / 错误）占用状态条的截止时间
+let tipFlashUntil = 0;    // 触发庆祝高亮的截止时间
+
+/** 挑下一条提示：优先还没触发过的；全触发过就随机；尽量不和当前这条重复 */
+function pickTip() {
+  const pool = tipPool();
+  if (!pool.length) return;
+  let cand = pool.filter((t) => !tipsDone.has(t.k));
+  if (!cand.length) cand = pool;
+  if (cand.length > 1 && tipIdx >= 0) cand = cand.filter((t) => t !== TIPS[tipIdx]);
+  const t = cand[(Math.random() * cand.length) | 0];
+  tipIdx = TIPS.indexOf(t);
+  el.statusText.textContent = t.text;
+}
+
+/** 摄像头链路就绪后调用：开始轮换玩法提示 */
+function startTips() {
+  if (tipIdx >= 0) return;
+  pickTip();
+}
+
+/**
+ * 每帧由主循环调用：
+ * · 新触发的玩法记成「已触发」（哪怕它不是当前提示的那条）；
+ * · 当前提示被触发 → 亮金 2 秒，然后换下一条没触发过的；
+ * · 状态条被系统消息占了 7 秒以上 → 悄悄把玩法提示请回来。
+ */
+function tickTips(active, now) {
+  if (tipIdx < 0) return;
+  let fresh = false;
+  for (const k of active) {
+    const key = TIP_MAP[k] || k;
+    if (!tipPool().some((t) => t.k === key) || tipsDone.has(key)) continue;
+    tipsDone.add(key);
+    saveTips();
+    fresh = true;
+  }
+  // 只要是「第一次玩出某个玩法」就换条：用户刚做完一个动作，
+  // 正是最好奇「还能玩什么」的时候，哪怕做的不是当前提示的那一条。
+  if (fresh) {
+    el.status.classList.add('hit');
+    tipFlashUntil = now + TIP_FLASH_MS;
+    pickTip();
+  }
+  if (tipFlashUntil && now > tipFlashUntil) {
+    tipFlashUntil = 0;
+    el.status.classList.remove('hit');
+  }
+  if (tipHoldUntil && now > tipHoldUntil && now > tipFlashUntil) {
+    tipHoldUntil = 0;
+    el.statusText.textContent = TIPS[tipIdx].text;
+  }
 }
 
 /* ---------------- 音乐说明气泡 ---------------- */
@@ -872,7 +1026,6 @@ function tick() {
   tree.update(t, params);
   spiral.update(dt, t, params, camera);
   groundBase.update(dt, t, params);
-  nearBokeh.update(dt, t, params, camera);
   archery.update(dt, t, gestureState.bow, params);
   effects.update(t, params);
   gifts.update(dt, router.trayWorld);
@@ -905,6 +1058,9 @@ function tick() {
   for (const h of el.hints) {
     h.classList.toggle('on', router.active.has(h.dataset.k));
   }
+
+  // 底部玩法提示：检测新触发的玩法 → 记账 → 亮金换条（见 TIPS 一节）
+  tickTips(router.active, now);
 
   // 拉弓提示：只在弓（或刚射出的箭）在的时候出现 —— 平时挂着它，
   // 等于一直提醒用户「你还没拉弓」。用户最常卡住的两件事是
@@ -987,7 +1143,6 @@ function resize() {
   tree.setPixelRatio(pixelRatio);
   spiral.setPixelRatio(pixelRatio);
   groundBase.setPixelRatio(pixelRatio);
-  nearBokeh.setViewport(camera, h, pixelRatio);
   groundBase.setViewport(camera, h, pixelRatio);
   heart.setPixelRatio(pixelRatio);
   if (loveMsg) loveMsg.setPixelRatio(pixelRatio);
@@ -1054,7 +1209,7 @@ async function boot() {
     await gesturePromise;
     cameraReady = true;
     el.camOff.style.display = 'none';
-    setStatus('举起双手 · 张开手掌试试');
+    startTips();
   } catch (err) {
     console.error(err);
     cameraReady = false;
@@ -1154,7 +1309,13 @@ function nextPaint() {
 }
 
 if (DEBUG) {
-  window.__app = { gesture, router, tree, spiral, groundBase, nearBokeh, archery, effects, audio, gifts, heart, loveMsg, lantern, confetti, missYou, breath, beatDetector, camera, bootState };
+  window.__app = { gesture, router, tree, spiral, groundBase, archery, effects, audio, gifts, heart, loveMsg, lantern, confetti, missYou, breath, beatDetector, camera, bootState,
+    tips: {
+      list: TIPS,
+      get idx() { return tipIdx; },
+      get done() { return [...tipsDone]; },
+      pickTip, tickTips, startTips,
+    } };
   // loveMsg / lantern / confetti / missYou 是空闲时段才建的，buildExtras 里建好后会补挂上来
   if (el.probe) el.probe.hidden = false;
 }
@@ -1205,6 +1366,16 @@ window.addEventListener('keydown', (e) => {
   const tag = (document.activeElement && document.activeElement.tagName) || '';
   if (/INPUT|TEXTAREA/.test(tag)) return;
   archery.demoShot(clock.elapsedTime);
+});
+
+// 按 S 手动触发一次「拍手暴雪」：不用真拍手也能反复看雪量 / 亮度 / 相机后推。
+// 走的是和真手势同一个入口，所以 HUD 那条「拍手」提示也会跟着亮。
+// router 里 explode / storm 都取 max，连按不会叠成两次爆炸，只是把衰减曲线拉回峰值。
+window.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.key.toLowerCase() !== 's') return;
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  if (/INPUT|TEXTAREA/.test(tag)) return;
+  handleGestureEvent('clap', { strength: 1 });
 });
 
 boot();

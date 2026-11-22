@@ -30,7 +30,8 @@ export const GESTURE_SWITCH = {
   fist: false,   // 握拳收拢
   burst: false,  // 张手炸裂：抓取 → 张开手掌（已被 bow 取代）
   bow: true,     // 双手拉弓 × 箭穿红心
-  clap: true,    // 拍手爆雪
+  clap: false,   // 拍手爆雪 —— 暂时屏蔽（拍手在日常动作里太容易误触，放歌打节拍就炸雪）。
+                 // 特效没删：按 S 键还能手动触发一次爆雪（main.js 底部的调试快捷键）。
   call: true,    // 打电话（拇指+小指）× 弹幕
   like: true,    // 点赞（拇指竖起）× 粒子大拇指 + 666
   ok: true,      // 单手 OK（拇指食指成圈）× 爱心 + 流星雨 + 烟花 + miss you

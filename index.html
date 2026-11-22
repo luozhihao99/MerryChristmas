@@ -58,6 +58,9 @@
     <div class="audio-bar">
       <button id="btnMusic" class="btn primary">放入音乐</button>
       <button id="btnPause" class="btn" disabled>播放</button>
+      <button id="btnHints" class="btn ghost" title="显示 / 隐藏玩法一览" aria-pressed="true">玩法</button>
+      <button id="btnCam" class="btn ghost" title="显示 / 隐藏摄像头小窗" aria-pressed="true">摄像头</button>
+      <button id="btnClean" class="btn icon" title="清屏 · 只留画面（Esc 或右下角「菜单」恢复）" aria-label="清屏" aria-pressed="false">⛶</button>
       <button id="btnHelp" class="btn help" title="音乐格式与手机导入说明" aria-label="音乐格式说明">?</button>
       <input id="fileInput" type="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac" hidden />
       <div class="beat" id="beatDot" title="鼓点"></div>
@@ -78,6 +81,7 @@
     </div>
   </header>
 
+  <!-- 摄像头小窗：默认开着。只影响「看不看得到画面」，video 一直在跑（手势识别靠它） -->
   <aside class="cam-wrap" id="camWrap">
     <video id="cam" playsinline muted autoplay></video>
     <div class="cam-off" id="camOff">摄像头未启动</div>
@@ -86,6 +90,7 @@
 
   <div class="probe" id="probe" hidden></div>
 
+  <!-- 玩法一览：默认展开（右上角「玩法」按钮可收起），底部状态条另有一条轮换提示 -->
   <div class="hints" id="hints">
     <div class="hint" data-k="fist"><b>握拳</b><span>树体收拢、彩灯转暗</span></div>
     <div class="hint" data-k="bow"><b>双手拉弓</b><span>两手一前一后拉开 → 松手放箭</span></div>
@@ -123,6 +128,15 @@
   <button id="btnPlayMusic" class="play-pill" hidden>
     <span class="pp-ico">♪</span><span class="pp-text">点击播放音乐</span>
   </button>
+
+  <!--
+    清屏后右上角的控制栏整块藏起来了，总得留一条回来的路。
+    这个小按钮只在清屏时出现：平时 opacity .22（几乎看不见），鼠标碰上才亮。
+  -->
+  <button id="btnUnclean" class="unclean" hidden title="退出清屏 · 显示菜单（Esc）" aria-label="退出清屏">☰</button>
+
+  <!-- 清屏瞬间的顶部轻提示：两秒后自己淡掉，只负责告诉用户「怎么回来」 -->
+  <div id="cleanToast" class="clean-toast" hidden>已进入清屏 · 右下角图标可退出（Esc 也行）</div>
 </div>
 
 <div id="loading">
