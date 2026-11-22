@@ -738,6 +738,7 @@ src/GroundBase.js     树底：暖光池 + 树冠回光 + 三盏地灯 + 星云/
 src/SpectrumRipple.js 树底频谱水波纹：左右对称的频谱环 + 鼓点向外扩散的涟漪
 src/BowArrow.js       双手拉弓：右下角的弓 + 左上角的红心 + 箭穿心粒子
 src/ClickBurst.js     点击烟花：点一下屏幕在点击位置炸一蓬粒子（全 GPU 池）
+src/i18n.js           三语词典（中文/English/ไทย）+ t()/tf()/applyStatic()，语言存 localStorage
 src/GestureController.js  MediaPipe 封装 → 手部状态与手势事件
 src/AudioEngine.js    解码、播放、FFT 分频段
 src/BeatDetector.js   鼓点检测（能量历史 + 自适应阈值）
@@ -800,7 +801,15 @@ assets/hand_landmarker.task  手势模型
   玩法一览、底部提示、接礼物计数、拉弓进度，画面里只剩树和特效。清屏瞬间顶部居中
   弹一条 2 秒的轻提示「右下角图标可退出」，之后自己淡掉。恢复入口：**右下角极淡的
   ☰ 图标**（opacity 0.22，鼠标碰上才亮，录屏里几乎看不见）或 **Esc**。
+  **⛶ 与 ☰ 都是纯图标，不参与翻译**（字典里没有它们的文本 key，切换语言不受影响）。
   样式在 `styles.css` 的 `#hud.clean …` / `.clean-toast`，逻辑在 `main.js` 的 `setClean()`
+- 语言切换：首屏遮罩上有 **中文 / English / ไทย** 三按钮；进入内容页后右上角音乐条
+  里的 **语言按钮**（显示 `中 / EN / ไท`，点击循环）随时可切。两者走同一个
+  `switchLanguage()`：`setLang()`（存 localStorage `tree.lang` + 刷静态）→
+  `refreshDynamicTexts()`（播放按钮、曲名区、音乐弹窗三态、摄像头占位、拉弓提示、
+  底部玩法提示全部按新语言重画）。动态文案的写入必须走 `setTrackLabel()` /
+  `setPromptButtons()` 这类「记 key 不记字符串」的辅助函数，否则切语言后残留旧语言。
+  曲名区 title、默认音乐标题等也全部 key 化（`trackTitle.*`）
 - 前景失焦光斑：**已移除**（`NearBokeh.js` 已删，见「前景：失焦光斑（已移除）」一节）
 - 打电话手势阈值：`_detectEvents` 里 `h.phone > 0.72`，探针第四行的 `电` 是实时分数
 - OK 手势阈值：`OK_CFG.threshold`（默认 0.62）、节奏在 `MissYou.js` 顶部的 `TL`（成形 / 停留 / 吹散 / 出字时间）

@@ -12,6 +12,7 @@ import { HeartEffect } from './HeartEffect.js';
 // 合计约 40KB 代码 + 十几万颗粒子的生成，首帧一个都用不上。
 import { GestureController } from './GestureController.js';
 import { AudioEngine } from './AudioEngine.js';
+import { applyStatic, getLang, setLang, t, tf } from './i18n.js';
 import { BeatDetector, demoBeat } from './BeatDetector.js';
 import { BreathMapper } from './BreathMapper.js';
 import { InteractionRouter } from './InteractionRouter.js';
@@ -42,6 +43,23 @@ if (DEFAULT_MUSIC) {
   } catch (e) { /* 地址不合法就跳过，不影响其它 */ }
 }
 
+// 静态文案按所选语言刷一遍（首屏遮罩还在屏幕上，必须抢在用户看清之前）。
+// 选择器的交互接线在 initLangPick()（定义集中在前面的常量都就位之后调用）。
+applyStatic();
+
+// 拉弓提示文案：key → i18n key。放在 tick 外面——tick 里有局部变量 t（时钟），
+// 会遮蔽 i18n 的翻译函数 t()，在那里直接调用会抛 TypeError
+const BOW_TIP_I18N = {
+  shot: 'bowtip.shot',
+  full: 'bowtip.full',
+  mid: 'bowtip.mid',
+  low: 'bowtip.low',
+  start: 'bowtip.start',
+};
+function bowTipText(key) {
+  return (BOW_TIP_I18N[key] && t(BOW_TIP_I18N[key])) || '';
+}
+
 const el = {
   loading: document.getElementById('loading'),
   loadingText: document.getElementById('loadingText'),
@@ -62,7 +80,8 @@ const el = {
   probe: document.getElementById('probe'),
   btnPlay: document.getElementById('btnPlayMusic'),
   btnSkip: document.getElementById('btnSkip'),
-  loadingTextEn: document.getElementById('loadingTextEn'),
+  langPick: document.getElementById('langPick'),
+  btnLang: document.getElementById('btnLang'),
   musicPrompt: document.getElementById('musicPrompt'),
   btnMusicYes: document.getElementById('btnMusicYes'),
   btnMusicNo: document.getElementById('btnMusicNo'),
@@ -180,18 +199,15 @@ function replaySwap(node) {
   node.classList.add('swap');
 }
 
-function setLoadingText(cn, en) {
-  if (cn && el.loadingText.textContent !== cn) {
-    el.loadingText.textContent = cn;
+/** 遮罩进度行只显示一行（所选语言）；text 由调用方用 t()/tf() 取好传进来 */
+function setLoadingText(text) {
+  if (text && el.loadingText.textContent !== text) {
+    el.loadingText.textContent = text;
     replaySwap(el.loadingText);
-  }
-  if (en != null && el.loadingTextEn.textContent !== en) {
-    el.loadingTextEn.textContent = en;
-    replaySwap(el.loadingTextEn);
   }
 }
 
-function paintLoading(sceneCn, sceneEn) {
+function paintLoading(sceneText) {
   if (bootState.finished) return;
 
   const { scene, withModel, skipped, rig } = bootState;
@@ -220,27 +236,27 @@ function paintLoading(sceneCn, sceneEn) {
   if (DEBUG) bootState.dbg = { scene, model, rig, rigShow, rigEl, pct, done };
 
   if (done) {
-    setLoadingText('准备好了', 'Ready');
+    setLoadingText(t('load.ready'));
   } else if (scene < 1) {
-    setLoadingText(sceneCn || '正在唤醒雪夜…', sceneEn || 'Waking up the snow night…');
+    setLoadingText(sceneText || t('load.waking'));
   } else if (!withModel) {
-    setLoadingText('正在铺开针叶…', 'Spreading the needles…');
+    setLoadingText(t('load.needles'));
   } else if (!modelDone) {
     const { loaded = 0, total = 0 } = modelProgress;
     if (model < 0 || !(total > 0)) {
-      setLoadingText('正在连接手势模型…', 'Connecting the hand model…');
+      setLoadingText(t('load.connect'));
     } else {
       const a = (loaded / 1048576).toFixed(1);
       const b = (total / 1048576).toFixed(1);
-      setLoadingText(`正在下载手势模型 ${a} / ${b} MB`, `Downloading hand model ${a} / ${b} MB`);
+      setLoadingText(tf('load.download', { a, b }));
     }
   } else if (!rigDone) {
     // 模型已经到手，剩下摄像头授权 / wasm / 建 landmarker 这几步，
-    // 文案由 GestureController 的 onStatus 推上来（它最清楚卡在哪一环）
-    const [cn, en] = bootState.rigText || ['正在启动手势识别…', 'Starting hand tracking…'];
-    setLoadingText(cn, en || 'Please wait…');
+    // 文案由 GestureController 的 onStatus 推上来（它最清楚卡在哪一环），
+    // 这里存的是 i18n key，切换语言后下一次重画自动跟着换
+    setLoadingText(t(bootState.rigText || 'gest.starting'));
   } else {
-    setLoadingText('正在收尾…', 'Finishing up…');
+    setLoadingText(t('load.finish'));
   }
 
   // 场景已好、后面还有东西在路上：空档里跑一道流光，
@@ -279,10 +295,7 @@ onModelProgress((p) => {
 /* ---------------- 渲染器与场景 ---------------- */
 
 if (!document.createElement('canvas').getContext('webgl2')) {
-  setLoadingText(
-    '当前浏览器不支持 WebGL2，请用 Chrome / Edge 打开',
-    'WebGL2 is not supported — please use Chrome or Edge',
-  );
+  setLoadingText(t('load.webgl2'));
   el.loadingPctNum.textContent = '—';
   throw new Error('WebGL2 unavailable');
 }
@@ -420,12 +433,12 @@ const gesture = new GestureController({
   // 手势事件总入口：真手势和下面的调试快捷键都从这里进 ——
   // 以后某个手势在 main.js 里补了额外特效，键盘触发也不会漏掉那一部分
   onEvent: handleGestureEvent,
-  onStatus: (cn, en) => {
-    // 遮罩上的文案由 paintLoading 独占（它管中英两行），这里只更新右上角状态条。
+  onStatus: (key) => {
+    // 遮罩上的文案由 paintLoading 独占（存 key，重画时按当前语言取），这里只更新右上角状态条。
     // 但遮罩还没收的时候，这几句就是「现在卡在哪一环」，得同时交给 paintLoading。
-    if (cn) {
-      setStatus(cn);
-      bootState.rigText = [cn, en || null];
+    if (key) {
+      setStatus(t(key));
+      bootState.rigText = key;
       paintLoading();
     }
   },
@@ -557,13 +570,13 @@ window.addEventListener('keydown', (e) => {
 // 已触发列表存 localStorage（键 tree.tips.done），刷新不重置；想清零删掉这个键即可。
 // 文案写得比左下角一览更完整 —— 一览默认是收起的，底部这句话常常是唯一的教学。
 const TIPS = [
-  { k: 'bow',    text: '试试 · 双手拉弓：两手一前一后拉开，松手放箭' },
-  { k: 'spread', text: '试试 · 双手张开合拢：缩放整棵树' },
-  { k: 'slide',  text: '试试 · 侧掌扇风：掌心朝侧左右挥，树会转起来' },
-  { k: 'heart',  text: '试试 · 双手比心：两手指尖并拢，停住别动' },
-  { k: 'call',   text: '试试 · 打电话：拇指 + 小指伸出，放一盏孔明灯' },
-  { k: 'like',   text: '试试 · 点赞：竖起大拇指，撒一蓬金箔' },
-  { k: 'ok',     text: '试试 · 单手 OK：拇指食指成圈，流星雨 + 烟花' },
+  { k: 'bow',    key: 'tip.bow' },
+  { k: 'spread', key: 'tip.spread' },
+  { k: 'slide',  key: 'tip.slide' },
+  { k: 'heart',  key: 'tip.heart' },
+  { k: 'call',   key: 'tip.call' },
+  { k: 'like',   key: 'tip.like' },
+  { k: 'ok',     key: 'tip.ok' },
 ];
 // 提示条 data-k 与 router.active 的键同名，只有「张开」例外（data-k="open"，归 burst 管）
 const TIP_MAP = { open: 'burst' };
@@ -594,9 +607,9 @@ function pickTip() {
   let cand = pool.filter((t) => !tipsDone.has(t.k));
   if (!cand.length) cand = pool;
   if (cand.length > 1 && tipIdx >= 0) cand = cand.filter((t) => t !== TIPS[tipIdx]);
-  const t = cand[(Math.random() * cand.length) | 0];
-  tipIdx = TIPS.indexOf(t);
-  el.statusText.textContent = t.text;
+  const pick = cand[(Math.random() * cand.length) | 0];
+  tipIdx = TIPS.indexOf(pick);
+  el.statusText.textContent = t(pick.key);
 }
 
 /** 摄像头链路就绪后调用：开始轮换玩法提示 */
@@ -634,7 +647,7 @@ function tickTips(active, now) {
   }
   if (tipHoldUntil && now > tipHoldUntil && now > tipFlashUntil) {
     tipHoldUntil = 0;
-    el.statusText.textContent = TIPS[tipIdx].text;
+    el.statusText.textContent = t(TIPS[tipIdx].key);
   }
 }
 
@@ -665,7 +678,7 @@ if (btnHelp && musicHelp) {
 
 // 微信内置浏览器不允许选择文件，提前说明，别让用户以为是页面坏了
 if (/MicroMessenger/i.test(navigator.userAgent) && !audio.playing) {
-  el.trackName.textContent = '微信内不能选文件 · 请用浏览器打开';
+  setTrackLabel('wechat');
 }
 
 /* ---------------- 音频加载 ---------------- */
@@ -673,12 +686,12 @@ if (/MicroMessenger/i.test(navigator.userAgent) && !audio.playing) {
 function audioErrorText(err) {
   const code = err && err.code;
   const name = err && err.name;
-  if (code === 'empty') return '这个文件是空的 · 换一个试试';
+  if (code === 'empty') return t('audio.err.empty');
   if (code === 'unsupported' || name === 'NotSupportedError') {
-    return '浏览器解不开这个格式 · 换 mp3 / m4a 试试（带版权保护的曲子不行）';
+    return t('audio.err.unsupported');
   }
-  if (name === 'EncodingError') return '音频编码不支持 · 换标准 mp3 试试';
-  return '音频加载失败 · 换 mp3 / m4a 试试，点 ? 看说明';
+  if (name === 'EncodingError') return t('audio.err.encoding');
+  return t('audio.err.generic');
 }
 
 function fmtTime(sec) {
@@ -691,8 +704,8 @@ function fmtTime(sec) {
 async function loadAudioFile(file) {
   if (!file) return;
   try {
-    el.trackName.textContent = '正在读取…';
-    setStatus('正在解码音频…');
+    setTrackLabel('audio.reading');
+    setStatus(t('audio.decoding'));
     const { duration, mode } = await audio.load(file);
     // 用户自己换了歌：默认音乐那条「点击播放」就不再弹了
     musicStarted = true;
@@ -700,13 +713,13 @@ async function loadAudioFile(file) {
     audio.play(0);
     beatDetector.reset();
     el.btnPause.disabled = false;
-    el.btnPause.textContent = '暂停';
-    el.trackName.textContent = audio.name;
+    el.btnPause.textContent = t('btnPause');
+    setTrackLabel(null, audio.name);
     const len = fmtTime(duration);
-    setStatus(`${audio.name}${len ? ' · ' + len : ''} · ${mode === 'element' ? '流式播放' : '鼓点驱动呼吸'}`);
+    setStatus(`${audio.name}${len ? ' · ' + len : ''} · ${t(mode === 'element' ? 'audio.stream' : 'audio.beat')}`);
   } catch (err) {
     console.error(err);
-    el.trackName.textContent = '加载失败 · 点 ? 看支持格式';
+    setTrackLabel('audio.fail');
     setStatus(audioErrorText(err), true);
   }
 }
@@ -732,7 +745,7 @@ window.addEventListener('drop', (e) => {
 el.btnPause.addEventListener('click', () => {
   const playing = audio.toggle();
   if (playing) musicStarted = true;
-  el.btnPause.textContent = playing ? '暂停' : '继续';
+  el.btnPause.textContent = playing ? t('btnPause') : t('btnResume');
   refreshPlayPill();
 });
 
@@ -808,42 +821,30 @@ function hideMusicPrompt(instant = false) {
   setTimeout(run, Math.max(0, 1000 - (performance.now() - promptShownAt)));
 }
 
-/** 弹窗里主按钮的三态：默认 / 取歌中（带百分比）/ 失败可重试 */
+/** 弹窗里主按钮的三态：默认 / 取歌中（带百分比）/ 失败可重试。文案全走 i18n */
 function setPromptButtons(state, pct) {
+  promptState = state;         // 记下来，切语言时重画用
   const yes = el.btnMusicYes;
   const no = el.btnMusicNo;
   if (!yes || !no) return;
-  const yesCn = yes.querySelector('.mb-cn');
-  const yesEn = yes.querySelector('.mb-en');
-  const noCn = no.querySelector('.mb-cn');
-  const noEn = no.querySelector('.mb-en');
-
   if (state === 'loading') {
     yes.disabled = true;
     // 流式加载拿不到「下载百分比」，只报「正在连接」，别编一个数字骗人
-    yesCn.textContent = pct == null ? '正在连接…' : `正在载入 ${pct}%`;
-    yesEn.textContent = 'Connecting';
-    noCn.textContent = '取消';
-    noEn.textContent = 'Cancel';
+    yes.textContent = pct == null ? t('mp.connect') : tf('mp.loading', { p: pct });
+    no.textContent = t('mp.cancel');
   } else if (state === 'slow') {
     // 连了五六秒还没拿到元数据：把「在等」和「卡死」区分开
     yes.disabled = true;
-    yesCn.textContent = '网络较慢，仍在连接…';
-    yesEn.textContent = 'Slow network…';
-    noCn.textContent = '取消';
-    noEn.textContent = 'Cancel';
+    yes.textContent = t('mp.slow');
+    no.textContent = t('mp.cancel');
   } else if (state === 'failed') {
     yes.disabled = false;
-    yesCn.textContent = '再试一次';
-    yesEn.textContent = 'Retry';
-    noCn.textContent = '先不用';
-    noEn.textContent = 'Not now';
+    yes.textContent = t('mp.retry');
+    no.textContent = t('mpNo');
   } else {
     yes.disabled = false;
-    yesCn.textContent = '开启音乐';
-    yesEn.textContent = 'Play';
-    noCn.textContent = '先不用';
-    noEn.textContent = 'Not now';
+    yes.textContent = t('mpYes');
+    no.textContent = t('mpNo');
   }
 }
 
@@ -853,7 +854,7 @@ function startMusic() {
   if (!audio.play(0)) return false;
   musicStarted = true;
   el.btnPause.disabled = false;
-  el.btnPause.textContent = '暂停';
+  el.btnPause.textContent = t('btnPause');
   refreshPlayPill();
   return true;
 }
@@ -886,17 +887,17 @@ async function fetchDefaultMusic() {
   let guard = null;
   loadSlow = false;
   try {
-    el.trackName.textContent = '正在连接默认音乐…';
+    setTrackLabel('track.connect');
     // 流式播放拼的是「第一个字节什么时候到」。五六秒还没元数据，
     // 说明源站或网络有问题，得让用户看到「在等」而不是像卡死。
     slowTimer = setTimeout(() => {
       loadSlow = true;
-      el.trackName.textContent = '网络较慢，仍在连接音乐…';
+      setTrackLabel('track.slow');
     }, 5000);
     // 三条路各 8 秒 = 24 秒，太久了。14 秒还没就绪就主动放弃，
     // 让用户看到「可重试」而不是一个转不停的转圈。
     guard = setTimeout(() => {
-      el.trackName.textContent = '音乐加载超时，可以再试一次';
+      setTrackLabel('track.timeout');
       audio.cancel();
     }, 14000);
     // 流式加载：只等元数据（几十 KB），不等整首。
@@ -915,11 +916,9 @@ async function fetchDefaultMusic() {
     defaultMusicReady = true;
     beatDetector.reset();
     el.btnPause.disabled = false;
-    el.btnPause.textContent = '播放';
-    el.trackName.textContent = DEFAULT_MUSIC_NAME;
-    el.trackName.title = analysable
-      ? '默认音乐 · 流式播放 · 鼓点驱动呼吸'
-      : '默认音乐 · 流式播放 · 读不到频谱，呼吸用内置节奏';
+    el.btnPause.textContent = t('btnPlay');
+    setTrackLabel(null, DEFAULT_MUSIC_NAME);
+    el.trackName.title = t(analysable ? 'trackTitle.stream' : 'trackTitle.noSpec');
 
     if (musicAutoplay) {
       // 取到了就响：这一下是用户在弹窗上点的，不算自动播放
@@ -943,7 +942,7 @@ async function fetchDefaultMusic() {
     // 允许再点一次：下一次点击重新发请求
     musicJob = null;
     musicAutoplay = false;
-    el.trackName.textContent = '内置节奏 · 点音乐换一首';
+    setTrackLabel('track.builtin');
     if (el.musicPrompt && !el.musicPrompt.hidden) setPromptButtons('failed');
     refreshPlayPill();
     return false;
@@ -1197,14 +1196,7 @@ function tick() {
       bowTipKey = key;
       el.bowTip.classList.toggle('show', show);
       el.bowTip.classList.toggle('full', key === 'full' || key === 'shot');
-      el.bowTipText.textContent = {
-        off: '',
-        shot: '箭已出弦 · 再拉一次',
-        full: '已拉满 · 两手一松就放箭',
-        mid: '继续拉 · 松手立即放箭',
-        low: '两手再拉开一点',
-        start: '两手指尖分开 · 一只手半握',
-      }[key];
+      el.bowTipText.textContent = bowTipText(key);
     }
     if (show) {
       el.bowTipPct.textContent = `${Math.round(pull * 100)}%`;
@@ -1273,11 +1265,11 @@ window.addEventListener('resize', resize);
 
 async function boot() {
   bootState.scene = 0.10;
-  paintLoading('正在唤醒雪夜…', 'Waking up the snow night…');
+  paintLoading(t('load.waking'));
   await nextPaint();                 // 先让遮罩出图（FCP 就是这一帧）
 
   bootState.scene = 0.35;
-  paintLoading('正在搭建舞台…', 'Building the stage…');
+  paintLoading(t('load.stage'));
 
   // 手势链路尽早启动：摄像头授权、wasm、模型都在后台跑，和首帧渲染并行
   const gesturePromise = cameraPossible ? startGesture() : null;
@@ -1287,7 +1279,7 @@ async function boot() {
   performance.mark('boot:tickend');
 
   bootState.scene = 1;
-  paintLoading('正在铺开针叶…', 'Spreading the needles…');
+  paintLoading(t('load.needles'));
   scheduleExtras();
 
   // 首帧已经出图，这时候问「先听一首歌？」不会拖慢 FCP
@@ -1296,8 +1288,7 @@ async function boot() {
   // 首屏最后排队的是整条手势链路：模型下载 + 摄像头授权 + wasm + landmarker。
   // 等「手势真的能用」再收遮罩 —— 只等模型就放人的话，进去以后摄像头小窗
   // 还在转圈、举手没反应，用户会以为坏了。等太久、或者用户点了跳过，就先放人。
-  let readyCn = '准备好了';
-  let readyEn = 'Ready';
+  let readyKey = 'ready.ok';
   if (gesturePromise) {
     const why = await Promise.race([
       gesturePromise.then(() => 'ok', () => 'fail'),
@@ -1306,18 +1297,16 @@ async function boot() {
     ]);
     // 遮罩上最后那句话要把结果说清楚：进去才发现「摄像头未授权」算是惊吓
     if (why === 'fail') {
-      readyCn = '摄像头未授权 · 进入音乐模式';
-      readyEn = 'Camera blocked · music mode';
+      readyKey = 'ready.fail';
     } else if (why === 'timeout') {
-      readyCn = '准备好了 · 手势马上可用';
-      readyEn = 'Ready · hand tracking will finish shortly';
+      readyKey = 'ready.timeout';
     }
   }
-  finishLoading(readyCn, readyEn);
+  finishLoading(readyKey);
 
   if (!gesturePromise) {
-    el.camOff.textContent = '需要 https 才能用摄像头';
-    setStatus('当前为音乐模式 · 摄像头需要 https 或 localhost', true);
+    applyCamOff('needHttps');
+    setStatus(t('cam.noHttps'), true);
     return;
   }
 
@@ -1330,17 +1319,17 @@ async function boot() {
     console.error(err);
     cameraReady = false;
     const secure = err && /https|localhost/.test(err.message || '');
-    setStatus(secure ? '摄像头需要 https · 当前为音乐模式' : '摄像头未授权 · 当前为音乐模式', true);
-    el.camOff.textContent = secure ? '需要 https 才能用摄像头' : '摄像头未授权';
+    setStatus(secure ? t('cam.needHttps') : t('cam.denied'), true);
+    applyCamOff(secure ? 'needHttps' : 'denied');
   }
 }
 
 /** 收起首屏遮罩。只做一次：跳过、加载完、超时三条路都可能走到这里 */
-function finishLoading(cn = '准备好了', en = 'Ready') {
+function finishLoading(key = 'ready.ok') {
   if (bootState.finished) return;
   bootState.finished = true;
   pushPct(100);
-  setLoadingText(cn, en);
+  setLoadingText(t(key));
   el.loadingBarTrack.classList.remove('is-wait');
   el.btnSkip.hidden = true;
   // 多给一拍：百分比要从当前值爬到 100 再淡出，不然「100%」来不及被看见
@@ -1499,11 +1488,90 @@ window.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey || e.key.toLowerCase() !== 'w') return;
   const tag = (document.activeElement && document.activeElement.tagName) || '';
   if (/INPUT|TEXTAREA/.test(tag)) return;
-  if (!ripple) { setStatus('水波纹特效已关闭（main.js 的 RIPPLE_ENABLED）'); return; }
+  if (!ripple) { setStatus(t('rippleOff')); return; }
   rippleDemo = !rippleDemo;
   const diag = rippleDiagnosis();
   console.log('[水波纹] 演示模式', rippleDemo ? '开' : '关', '·', diag);
   setStatus(rippleDemo ? '水波纹演示 · ' + diag : '水波纹演示关 · ' + diag);
 });
 
+// 摄像头小窗占位文案的状态（null = 还没启动 / needHttps / denied）。
+// 存 key 而不是存字符串：切换语言时按新语言重取。
+let camOffState = null;
+function applyCamOff(state) {
+  if (state !== undefined) camOffState = state;
+  if (el.camOff) el.camOff.textContent = camOffState ? t('camOff.' + camOffState) : t('camOff');
+}
+
+/* ---------------- 语言切换（内容页里也能切） ---------------- */
+
+// 语言按钮上显示的短标签：固定写死，不进词典（「中」这种字不需要被翻译）
+const LANG_LABEL = { zh: '中', en: 'EN', th: 'ไท' };
+
+// 曲名区当前显示的是什么。记 key（或歌名），不记旧语言的字符串——
+// 切语言时才知道该用新语言重取哪句。
+let trackLabel = { key: 'trackNone', name: null };
+function setTrackLabel(key, name = null) {
+  trackLabel = { key: key || trackLabel.key, name };
+  el.trackName.textContent = name !== null ? name : t(key);
+}
+
+// 音乐弹窗主按钮当前处在哪个态（idle/loading/slow/failed），切语言时重画
+let promptState = 'idle';
+
+/** 语言切走之后，把所有「JS 写出来的」动态文案按新语言重刷一遍。
+ *  静态文案（按钮字、玩法一览、弹窗、toast 等）由 applyStatic() 负责，那边先调。 */
+function refreshDynamicTexts() {
+  // 播放/暂停按钮：按当前播放状态取词
+  el.btnPause.textContent = audio.playing ? t('btnPause') : t('btnPlay');
+  // 曲名区
+  setTrackLabel(trackLabel.key, trackLabel.name);
+  // 音乐弹窗（如果正开着某个态）
+  if (el.musicPrompt && !el.musicPrompt.hidden && promptState !== 'idle') {
+    setPromptButtons(promptState);
+  }
+  applyCamOff();
+  bowTipKey = '';          // 拉弓提示下一帧按新语言重写
+  // 底部提示条：正在轮换玩法提示就换成新语言那条；被系统消息顶掉时不动，
+  // 那条消息是瞬时的，下一轮 tick 会恢复玩法提示（到时候自然用新语言）
+  if (tipIdx >= 0 && !tipHoldUntil) el.statusText.textContent = t(TIPS[tipIdx].key);
+}
+
+/** 统一的切语言入口：首屏选择器和内容页的语言按钮都走这里 */
+function switchLanguage(lang) {
+  setLang(lang);
+  applyStatic();                       // 标题/按钮字/一览/弹窗/toast 等静态全部重刷
+  syncLangPickButtons();
+  if (el.btnLang) el.btnLang.textContent = LANG_LABEL[getLang()];
+  refreshDynamicTexts();
+}
+
+function syncLangPickButtons() {
+  if (!el.langPick) return;
+  el.langPick.querySelectorAll('button').forEach((b) => {
+    b.classList.toggle('on', b.dataset.lang === getLang());
+  });
+}
+
+/** 首屏语言选择器：点了立即切语言（存 localStorage），下次进来自动预选 */
+function initLangPick() {
+  if (!el.langPick) return;
+  syncLangPickButtons();
+  el.langPick.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-lang]');
+    if (!b) return;
+    switchLanguage(b.dataset.lang);
+    // 已经画过的遮罩进度行按新语言重画
+    if (!bootState.finished) paintLoading();
+  });
+}
+
+/** 内容页的语言按钮：中 → EN → ไท → 中 循环。切换即刻生效并持久化 */
+el.btnLang.addEventListener('click', () => {
+  const order = ['zh', 'en', 'th'];
+  const next = order[(order.indexOf(getLang()) + 1) % order.length];
+  switchLanguage(next);
+});
+
 boot();
+initLangPick();

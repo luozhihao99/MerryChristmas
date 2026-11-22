@@ -210,7 +210,7 @@ export class GestureController {
    *   { wasmBase, modelBuffer, onProgress }
    * 模型下载与摄像头授权并行进行，谁先完成都不影响另一个。
    *
-   * onStatus(cn, en) 会被三处调用：请求权限 → 启动识别 → 就绪。
+   * onStatus(key) 会被多处调用，传的是 i18n key（见 src/i18n.js），由 main.js 翻译后显示。
    * 首屏遮罩直接拿这三句当中英文案，所以英文必须一起给。
    */
   async init(prefetched = {}) {
@@ -240,16 +240,16 @@ export class GestureController {
 
     // 模型建完却还没就绪，只可能是在等摄像头 —— 文案说清楚，
     // 免得用户以为「正在启动」这句卡死了（其实是权限弹窗还没人点）
-    if (!cameraDone) this.onStatus('正在等待摄像头…', 'Waiting for the camera…');
+    if (!cameraDone) this.onStatus('gest.camWait');
     await cameraPromise;
     performance.mark('mp:camera-ready');
     this.ready = true;
-    this.onStatus('把手举到镜头前', 'Raise your hands to the camera');
+    this.onStatus('gest.handsUp');
     return true;
   }
 
   async _createLandmarker(wasmBase, modelBuffer, onProgress) {
-    this.onStatus('正在启动手势识别…', 'Starting hand tracking…');
+    this.onStatus('gest.starting');
     performance.mark('mp:wasm-start');
     const vision = await FilesetResolver.forVisionTasks(wasmBase);
     performance.mark('mp:wasm-ready');
@@ -293,7 +293,7 @@ export class GestureController {
   }
 
   async _startCamera() {
-    this.onStatus('正在请求摄像头权限…', 'Asking for camera access…');
+    this.onStatus('gest.asking');
     this.stream = await navigator.mediaDevices.getUserMedia({
       video: {
         width: { ideal: 640 },

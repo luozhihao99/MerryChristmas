@@ -94,6 +94,13 @@ html,body{
   font-size:13px; line-height:1; color:var(--faint);
 }
 .btn.icon:hover{ color:var(--ink); }
+/* 语言按钮（中/EN/ไท）：文字短，做成和图标按钮同宽的小方块，窄屏不撑爆顶栏 */
+.btn.lang{
+  width:26px; padding:7px 0;
+  font-size:11px; line-height:1; color:var(--faint);
+  letter-spacing:0;
+}
+.btn.lang:hover{ color:var(--ink); }
 /* 「玩法 / 摄像头」这类开关按钮：平时更淡，按下去才点亮（和 help 的展开态同款） */
 .btn.ghost{ color:var(--faint); }
 .btn.ghost:hover{ color:var(--ink); }
@@ -518,6 +525,28 @@ html,body{
 }
 
 /* 状态行：左边「在做什么」（中英双行），右边「到几成」 */
+/* 语言选择：首屏遮罩上的三个胶囊按钮（中文 / English / ไทย）。
+   点了立即切语言并存 localStorage，下次进来自动预选。 */
+.lang-pick{
+  display:flex; gap:8px; justify-content:center;
+  margin:14px 0 4px;
+}
+.lang-pick button{
+  font:inherit; font-size:12px; letter-spacing:.04em;
+  color:rgba(226,235,244,.62);
+  background:rgba(10,14,20,.5);
+  border:1px solid rgba(190,214,236,.18);
+  border-radius:999px; padding:6px 16px;
+  cursor:pointer;
+  transition:color .2s, border-color .2s, background .2s;
+}
+.lang-pick button:hover{ color:var(--gold); border-color:rgba(232,192,122,.4); }
+.lang-pick button.on{
+  color:var(--gold);
+  border-color:rgba(232,192,122,.55);
+  background:rgba(232,192,122,.10);
+}
+
 .loading-status{
   margin-top:16px;
   display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
@@ -673,6 +702,7 @@ html,body{
 }
 .btn.help{ width:22px; padding:6px 0; }
   .btn.icon{ width:22px; padding:6px 0; font-size:12px; }
+  .btn.lang{ width:20px; padding:6px 0; font-size:10px; }
   .unclean{ right:16px; bottom:14px; width:30px; height:30px; font-size:13px; }
   /* 窄屏放不下曲名，改为在底部状态条里显示 */
   .track{ display:none; }

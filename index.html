@@ -53,18 +53,20 @@
   <header class="hud-top">
     <div class="brand">
       <div class="brand-en">Merry Christmas</div>
-      <div class="brand-cn">手势粒子圣诞树 · MediaPipe Hands × Three.js</div>
+      <div class="brand-cn" data-i18n="brandSub">手势粒子圣诞树 · MediaPipe Hands × Three.js</div>
     </div>
     <div class="audio-bar">
-      <button id="btnMusic" class="btn primary">放入音乐</button>
-      <button id="btnPause" class="btn" disabled>播放</button>
-      <button id="btnHints" class="btn ghost" title="显示 / 隐藏玩法一览" aria-pressed="true">玩法</button>
-      <button id="btnCam" class="btn ghost" title="显示 / 隐藏摄像头小窗" aria-pressed="true">摄像头</button>
-      <button id="btnClean" class="btn icon" title="清屏 · 只留画面（Esc 或右下角「菜单」恢复）" aria-label="清屏" aria-pressed="false">⛶</button>
+      <button id="btnMusic" class="btn primary" data-i18n="btnMusic">放入音乐</button>
+      <button id="btnPause" class="btn" data-i18n="btnPlay" disabled>播放</button>
+      <button id="btnHints" class="btn ghost" data-i18n="btnHints" data-i18n-title="btnHintsTitle" title="显示 / 隐藏玩法一览" aria-pressed="true">玩法</button>
+      <button id="btnCam" class="btn ghost" data-i18n="btnCam" data-i18n-title="btnCamTitle" title="显示 / 隐藏摄像头小窗" aria-pressed="true">摄像头</button>
+      <!-- 清屏：纯图标，不参与翻译（icon 本身无国界）；提示靠 title/aria-label -->
+      <button id="btnClean" class="btn icon" data-i18n-title="btnCleanTitle" title="清屏 · 只留画面（Esc 或右下角「菜单」恢复）" aria-label="清屏" aria-pressed="false">⛶</button>
+      <button id="btnLang" class="btn lang" title="Language / 语言 / ภาษา" aria-label="切换语言">中</button>
       <button id="btnHelp" class="btn help" style="display: none;" title="音乐格式与手机导入说明" aria-label="音乐格式说明">?</button>
       <input id="fileInput" type="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac" hidden />
-      <div class="beat" id="beatDot" title="鼓点"></div>
-      <div class="track" id="trackName">无音乐 · 内置律动</div>
+      <div class="beat" id="beatDot" data-i18n-title="beatTitle" title="鼓点"></div>
+      <div class="track" id="trackName" data-i18n="trackNone">无音乐 · 内置律动</div>
 
       <!-- <div class="music-help" id="musicHelp" hidden>
         <div class="mh-title">放什么最稳</div>
@@ -84,24 +86,24 @@
   <!-- 摄像头小窗：默认开着。只影响「看不看得到画面」，video 一直在跑（手势识别靠它） -->
   <aside class="cam-wrap" id="camWrap">
     <video id="cam" playsinline muted autoplay></video>
-    <div class="cam-off" id="camOff">摄像头未启动</div>
-    <div class="cam-tag"><span id="handCount">0</span> 只手</div>
+    <div class="cam-off" id="camOff" data-i18n="camOff">摄像头未启动</div>
+    <div class="cam-tag"><span id="handCount">0</span> <span data-i18n="handsUnit">只手</span></div>
   </aside>
 
   <div class="probe" id="probe" hidden></div>
 
   <!-- 玩法一览：默认展开（右上角「玩法」按钮可收起），底部状态条另有一条轮换提示 -->
   <div class="hints" id="hints">
-    <div class="hint" data-k="fist"><b>握拳</b><span>树体收拢、彩灯转暗</span></div>
-    <div class="hint" data-k="bow"><b>双手拉弓</b><span>两手一前一后拉开 → 松手放箭</span></div>
-    <div class="hint" data-k="spread"><b>双手开合</b><span>缩放整棵树</span></div>
-    <div class="hint" data-k="clap"><b>拍手</b><span>爆雪 + 星光</span></div>
-    <div class="hint" data-k="slide"><b>侧掌扇风</b><span>掌心朝侧 · 左右扇 → 树绕轴转</span></div>
-    <div class="hint" data-k="tray"><b>掌心向上</b><span>托盘接礼物</span></div>
-    <div class="hint" data-k="heart"><b>双手比心</b><span>两手各捏半心 · 并拢停住</span></div>
-    <div class="hint" data-k="call"><b>打电话</b><span>拇指 + 小指伸出 · 放一盏孔明灯</span></div>
-    <div class="hint" data-k="like"><b>点赞</b><span>拇指竖起 · 四指收回 · 金箔纸屑</span></div>
-    <div class="hint" data-k="ok"><b>单手 OK</b><span>拇指食指成圈 · 三指伸开 · 爱心 + 流星 + 烟花</span></div>
+    <div class="hint" data-k="fist" data-i18n="hint.fist"><b>握拳</b><span>树体收拢、彩灯转暗</span></div>
+    <div class="hint" data-k="bow" data-i18n="hint.bow"><b>双手拉弓</b><span>两手一前一后拉开 → 松手放箭</span></div>
+    <div class="hint" data-k="spread" data-i18n="hint.spread"><b>双手开合</b><span>缩放整棵树</span></div>
+    <div class="hint" data-k="clap" data-i18n="hint.clap"><b>拍手</b><span>爆雪 + 星光</span></div>
+    <div class="hint" data-k="slide" data-i18n="hint.slide"><b>侧掌扇风</b><span>掌心朝侧 · 左右扇 → 树绕轴转</span></div>
+    <div class="hint" data-k="tray" data-i18n="hint.tray"><b>掌心向上</b><span>托盘接礼物</span></div>
+    <div class="hint" data-k="heart" data-i18n="hint.heart"><b>双手比心</b><span>两手各捏半心 · 并拢停住</span></div>
+    <div class="hint" data-k="call" data-i18n="hint.call"><b>打电话</b><span>拇指 + 小指伸出 · 放一盏孔明灯</span></div>
+    <div class="hint" data-k="like" data-i18n="hint.like"><b>点赞</b><span>拇指竖起 · 四指收回 · 金箔纸屑</span></div>
+    <div class="hint" data-k="ok" data-i18n="hint.ok"><b>单手 OK</b><span>拇指食指成圈 · 三指伸开 · 爱心 + 流星 + 烟花</span></div>
   </div>
 
   <div class="bow-tip" id="bowTip" hidden>
@@ -113,12 +115,12 @@
   </div>
 
   <div class="status" id="status">
-    <span class="dot"></span><span id="statusText">正在加载模型…</span>
+    <span class="dot"></span><span id="statusText" data-i18n="statusBoot">正在加载模型…</span>
   </div>
 
   <div class="score" id="score">
     <div class="score-num" id="scoreNum">0</div>
-    <div class="score-label">礼物已接住</div>
+    <div class="score-label" data-i18n="scoreLabel">礼物已接住</div>
   </div>
 
   <!--
@@ -126,29 +128,36 @@
     不如摆一个明确的按钮：点了才响，没点就没有声音，用户心里有数。
   -->
   <button id="btnPlayMusic" class="play-pill" hidden>
-    <span class="pp-ico">♪</span><span class="pp-text">点击播放音乐</span>
+    <span class="pp-ico">♪</span><span class="pp-text" data-i18n="playPill">点击播放音乐</span>
   </button>
 
   <!--
     清屏后右上角的控制栏整块藏起来了，总得留一条回来的路。
     这个小按钮只在清屏时出现：平时 opacity .22（几乎看不见），鼠标碰上才亮。
   -->
-  <button id="btnUnclean" class="unclean" hidden title="退出清屏 · 显示菜单（Esc）" aria-label="退出清屏">☰</button>
+  <button id="btnUnclean" class="unclean" hidden data-i18n-title="uncleanTitle" title="退出清屏 · 显示菜单（Esc）" aria-label="退出清屏">☰</button>
 
   <!-- 清屏瞬间的顶部轻提示：两秒后自己淡掉，只负责告诉用户「怎么回来」 -->
-  <div id="cleanToast" class="clean-toast" hidden>已进入清屏 · 右下角图标可退出（Esc 也行）</div>
+  <div id="cleanToast" class="clean-toast" hidden data-i18n="cleanToast">已进入清屏 · 右下角图标可退出（Esc 也行）</div>
 </div>
 
 <div id="loading">
   <div class="loading-inner">
     <div class="loading-title">Merry Christmas</div>
 
-    <!-- 状态文本与百分比同一行：左边说「在做什么」（中英双行），右边说「到几成」。
+    <!-- 语言选择：进入时选一次，存 localStorage；下回进来自动预选上次的选择。
+         文案 key 见 src/i18n.js；粒子文字特效（love you 字幕等）不随语言变化。 -->
+    <div class="lang-pick" id="langPick" role="group" aria-label="Language">
+      <button type="button" data-lang="zh">中文</button>
+      <button type="button" data-lang="en">English</button>
+      <button type="button" data-lang="th">ไทย</button>
+    </div>
+
+    <!-- 状态文本与百分比同一行：左边说「在做什么」（按所选语言单行），右边说「到几成」。
          数字由 main.js 的补间驱动，逐帧爬升，不会跳。 -->
     <div class="loading-status">
       <span class="ls-text">
         <span class="loading-sub" id="loadingText">正在唤醒雪夜…</span>
-        <span class="loading-sub-en" id="loadingTextEn">Waking up the snow night…</span>
       </span>
       <span class="loading-pct" id="loadingPct">
         <b id="loadingPctNum">0</b><i>%</i>
@@ -158,13 +167,11 @@
     <div class="loading-bar" id="loadingBarTrack"><i id="loadingBar"></i></div>
 
     <div class="loading-note">
-      <span>请允许使用摄像头，举起双手即可开始</span>
-      <em>Allow camera access, then raise both hands</em>
+      <span data-i18n="note">请允许使用摄像头，举起双手即可开始</span>
     </div>
 
     <button id="btnSkip" class="loading-skip" hidden>
-      <span>不等了，先看看树</span>
-      <em>Skip the rest · see the tree</em>
+      <span data-i18n="skip">不等了，先看看树</span>
     </button>
   </div>
 </div>
@@ -178,19 +185,13 @@
 <div id="musicPrompt" class="music-prompt" hidden>
   <div class="mp-card" role="dialog" aria-modal="true" aria-labelledby="mpTitleCn">
     <div class="mp-ico" aria-hidden="true">♪</div>
-    <h2 class="mp-title" id="mpTitleCn">先听一首歌？</h2>
-    <p class="mp-title-en">Enjoy some music?</p>
-    <p class="mp-desc">
+    <h2 class="mp-title" id="mpTitleCn" data-i18n="mpTitle">先听一首歌？</h2>
+    <p class="mp-desc" data-i18n="mpDesc">
       模型和摄像头还在准备，这几秒可以先听着。
-      <em>Play a tune while the model and camera get ready.</em>
     </p>
     <div class="mp-actions">
-      <button id="btnMusicYes" class="mp-btn primary" type="button">
-        <span class="mb-cn">开启音乐</span><em class="mb-en">Play</em>
-      </button>
-      <button id="btnMusicNo" class="mp-btn" type="button">
-        <span class="mb-cn">先不用</span><em class="mb-en">Not now</em>
-      </button>
+      <button id="btnMusicYes" class="mp-btn primary" type="button" data-i18n="mpYes">开启音乐</button>
+      <button id="btnMusicNo" class="mp-btn" type="button" data-i18n="mpNo">先不用</button>
     </div>
   </div>
 </div>
