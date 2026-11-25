@@ -712,8 +712,11 @@ html,body{
 
 /* 加了玩法/摄像头/清屏后，小手机上一行放不下 —— 整体再收紧一档 */
 @media (max-width:480px){
-  .hud-top{ gap:8px; }
-  .brand-en{ font-size:12px; letter-spacing:.1em; }
+  .hud-top{ gap:8px; justify-content:flex-end; }
+  /* 小屏：标题让位 —— 树本身就是画面主角，标题只是装饰；而右边那排全是
+     功能按钮（音乐/播放/玩法/摄像头/清屏/语言），一个都不能砍。
+     实测 390px 视口下两者加起来还差 8px，只能牺牲左边。 */
+  .brand{ display:none; }
   .audio-bar{ gap:5px; padding:4px 6px; }
   .btn{ padding:5px 7px; font-size:10.5px; letter-spacing:.02em; }
   .btn.icon, .btn.help{ width:20px; padding:5px 0; }

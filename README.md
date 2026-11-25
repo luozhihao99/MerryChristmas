@@ -810,6 +810,10 @@ assets/hand_landmarker.task  手势模型
   底部玩法提示全部按新语言重画）。动态文案的写入必须走 `setTrackLabel()` /
   `setPromptButtons()` 这类「记 key 不记字符串」的辅助函数，否则切语言后残留旧语言。
   曲名区 title、默认音乐标题等也全部 key 化（`trackTitle.*`）
+- 移动端顶栏：**≤480px 隐藏左上角标题**（`.brand{display:none}`，`.hud-top` 改
+  `justify-content:flex-end`）—— 标题是纯装饰，右边那排全是功能按钮砍不得；
+  实测 390px 视口下标题+控制栏还差 8px 放不下，只能牺牲左边。481~600px 空间充裕，
+  标题照常显示。各级紧凑档在 `styles.css` 的 `@media(max-width:760px/480px)`
 - 前景失焦光斑：**已移除**（`NearBokeh.js` 已删，见「前景：失焦光斑（已移除）」一节）
 - 打电话手势阈值：`_detectEvents` 里 `h.phone > 0.72`，探针第四行的 `电` 是实时分数
 - OK 手势阈值：`OK_CFG.threshold`（默认 0.62）、节奏在 `MissYou.js` 顶部的 `TL`（成形 / 停留 / 吹散 / 出字时间）
